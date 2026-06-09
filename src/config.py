@@ -29,13 +29,20 @@ class Config:
     voxel_size: float = 25.0
 
     # Buildings: each is (center_xyz, size_lwh).  c_b and s_b in the paper.
+    # Scenario: two full-height walls across the map with STAGGERED gaps (north
+    # gap in wall A, south gap in wall B).  A UAV crossing the map end-to-end
+    # must thread the north gap, traverse the corridor between the walls, then
+    # thread the south gap -> a forced S-shaped detour.  Walls span the full
+    # usable altitude band so flying over is impossible; the gaps keep the
+    # feasible-voxel graph connected, guaranteeing a solution exists.
     buildings: List[Tuple[Tuple[float, float, float],
                           Tuple[float, float, float]]] = field(default_factory=lambda: [
-        ((75.0, 75.0, 45.0), (60.0, 60.0, 90.0)),
-        ((210.0, 90.0, 35.0), (70.0, 50.0, 70.0)),
-        ((120.0, 210.0, 50.0), (55.0, 80.0, 100.0)),
-        ((230.0, 220.0, 30.0), (60.0, 60.0, 60.0)),
-        ((150.0, 140.0, 25.0), (40.0, 40.0, 50.0)),
+        # --- Wall A at x ~= 125, gap on the NORTH side (high y) ---
+        ((125.0, 70.0, 60.0), (30.0, 140.0, 130.0)),   # blocks y in [0,140]
+        # (gap: y in [140, 300] open)
+        # --- Wall B at x ~= 200, gap on the SOUTH side (low y) ---
+        ((200.0, 230.0, 60.0), (30.0, 140.0, 130.0)),  # blocks y in [160,300]
+        # (gap: y in [0, 160] open)
     ])
 
     # Ground base stations: antenna position p_m^G = (x,y,z).
@@ -47,6 +54,8 @@ class Config:
         (150.0, 150.0, 18.0),
         (150.0, 10.0, 12.0),
         (10.0, 150.0, 12.0),
+        (290.0, 150.0, 12.0),
+        (150.0, 290.0, 12.0),
     ])
 
     # ----------------------------------------------------------------- #
@@ -125,17 +134,20 @@ class Config:
     # Multi-UAV system (paper Sec. II-A / III)                           #
     # ----------------------------------------------------------------- #
     n_uav: int = 3              # |U|
-    # Start / goal given as approximate world coordinates; snapped to the
-    # nearest feasible voxel at build time.
+    # Scenario: end-to-end traversal across the map.  UAV0, UAV1 start at the
+    # WEST end and fly to the EAST end; UAV2 starts at the EAST end and flies
+    # WEST.  All three must thread the staggered-gap walls in the middle, so
+    # their paths cross in the central corridor (collision-avoidance test).
+    # World coords are snapped to the nearest feasible voxel at build time.
     starts_world: List[Tuple[float, float, float]] = field(default_factory=lambda: [
-        (10.0, 10.0, 40.0),
-        (290.0, 10.0, 40.0),
-        (10.0, 290.0, 40.0),
+        (10.0, 100.0, 40.0),    # UAV0: west, south lane  -> east
+        (10.0, 200.0, 40.0),    # UAV1: west, north lane  -> east
+        (290.0, 150.0, 40.0),   # UAV2: east, mid lane    -> west
     ])
     goals_world: List[Tuple[float, float, float]] = field(default_factory=lambda: [
-        (290.0, 290.0, 40.0),
-        (10.0, 290.0, 60.0),
-        (290.0, 10.0, 60.0),
+        (290.0, 200.0, 40.0),   # UAV0 -> east, north lane
+        (290.0, 100.0, 40.0),   # UAV1 -> east, south lane
+        (10.0, 150.0, 40.0),    # UAV2 -> west, mid lane
     ])
 
     # ----------------------------------------------------------------- #
