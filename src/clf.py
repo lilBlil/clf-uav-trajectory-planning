@@ -119,7 +119,18 @@ class CLFMap:
 
     # ------------------------------------------------------------------ #
     def _build(self):
-        """Fill all fingerprint fields over the feasible voxel set."""
+        """Fill all fingerprint fields over the feasible voxel set.
+
+        Two passes:
+          1. compute the raw capacity C(v_i) and localization error L(v_i) on
+             every feasible voxel (geometry + propagation only -- independent
+             of the sigmoid thresholds);
+          2. if cfg.auto_calibrate, derive C_th / L_th / slopes from those
+             distributions (see calibrate()), then map C and L through the
+             fingerprint sigmoids.
+        This guarantees the thresholds are set FROM the data, never by hand.
+        """
+        # --- pass 1: raw capacity / localization error per voxel ---------- #
         for cell in map(tuple, self.env.feasible_idx):
             p = self.env.center_of(cell)
             snr, d = self._snr_to_bs(p)
@@ -129,14 +140,64 @@ class CLFMap:
             if n_vis >= 1:
                 # Capacity C(v_i) = max_m B log2(1 + SNR_{i,m}).
                 R = self.cfg.B * np.log2(1.0 + snr[vis])
-                C = float(np.max(R))
-                self.C[cell] = C
-                self.f_comm[cell] = self._f_comm(C, n_vis)
+                self.C[cell] = float(np.max(R))
             if n_vis >= 4:
                 crlb = self._crlb(p, vis, snr)
-                L = float(np.sqrt(crlb)) if np.isfinite(crlb) else np.inf
-                self.L[cell] = L
-                self.f_loc[cell] = self._f_loc(L, n_vis)
+                self.L[cell] = float(np.sqrt(crlb)) if np.isfinite(crlb) else np.inf
+
+        # --- auto-calibrate the sigmoid thresholds from the distributions -- #
+        if getattr(self.cfg, "auto_calibrate", False):
+            self.calibrate()
+
+        # --- pass 2: fingerprints through the (calibrated) sigmoids ------- #
+        for cell in map(tuple, self.env.feasible_idx):
+            n_vis = int(self.M_count[cell])
+            if n_vis >= 1:
+                self.f_comm[cell] = self._f_comm(self.C[cell], n_vis)
+            if n_vis >= 4:
+                self.f_loc[cell] = self._f_loc(self.L[cell], n_vis)
+
+    # ------------------------------------------------------------------ #
+    def calibrate(self):
+        """Derive C_th / delta_C / alpha_C and L_th / delta_L / alpha_L from the
+        empirical C and L distributions over the feasible voxels (no hand-set
+        thresholds).  Mutates cfg in place; returns the chosen params.
+
+        A logistic sigmoid S(a*x) crosses 0.05 and 0.95 at x = +-2.944/a, so the
+        (0.05, 0.95) transition band has total width  W = 2*2.944/a.  We size W
+        as a multiple of the inter-quartile range of the underlying quantity so
+        that ~30-70% of the voxels fall inside the band:
+            a = 2 * 2.944 / (band_iqr * IQR).
+        """
+        cfg = self.cfg
+        Z = 2.0 * 2.944  # logistic 5%-95% span (in units of 1/slope)
+
+        # Communication: sigmoid argument is C, centred on the median capacity.
+        C = self.C[np.isfinite(self.C)]
+        if C.size:
+            c_med = float(np.median(C))
+            c_iqr = float(np.percentile(C, 75) - np.percentile(C, 25))
+            c_iqr = max(c_iqr, 1e-9)
+            cfg.delta_C = 0.05 * c_med
+            cfg.C_th = c_med + cfg.delta_C            # so C_th - delta_C = median
+            cfg.alpha_C = Z / (cfg.comm_band_iqr * c_iqr)
+
+        # Localization: sigmoid argument is 1/L (smaller error -> larger value),
+        # centred on the median inverse error over loc-capable voxels.
+        Lmask = np.isfinite(self.L) & (self.M_count >= 4)
+        L = self.L[Lmask]
+        if L.size:
+            r = 1.0 / L                                # inverse error 1/L
+            r_med = float(np.median(r))
+            r_iqr = float(np.percentile(r, 75) - np.percentile(r, 25))
+            r_iqr = max(r_iqr, 1e-9)
+            L_ref = 1.0 / r_med                        # = L_th + delta_L
+            cfg.delta_L = 0.25 * L_ref
+            cfg.L_th = L_ref - cfg.delta_L
+            cfg.alpha_L = Z / (cfg.loc_band_iqr * r_iqr)
+
+        return dict(C_th=cfg.C_th, delta_C=cfg.delta_C, alpha_C=cfg.alpha_C,
+                    L_th=cfg.L_th, delta_L=cfg.delta_L, alpha_L=cfg.alpha_L)
 
     # ------------------------------------------------------------------ #
     def F(self, cell):
