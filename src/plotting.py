@@ -197,20 +197,23 @@ def _clf_stats(clf, trajs, cfg):
     return np.array(stats)
 
 
-def plot_policy_comparison(env, clf, marl, ref_trajs, mappo_trajs, outdir):
-    """Compare a CLF-blind reference policy with the trained CLF-aware MAPPO.
+def plot_policy_comparison(env, clf, marl, policies, outdir):
+    """Compare several planners on the same scenario.
 
-    Left  : top-down paths of both policies over the f_loc field (shows the
-            CLF-driven horizontal detour).
-    Right : grouped bars of mean f_comm / f_loc / CLF-reward-per-step, reference
-            vs MAPPO, averaged over all UAVs -- the quantitative gain.
+    ``policies`` is a list of dicts, each:
+        {"name": str, "trajs": [traj per UAV], "color": str, "ls": "-"|"--"}
+    drawn in order; the LAST one is treated as the highlighted method (MAPPO).
+
+    Left  : top-down paths of all policies over the f_loc field (shows the
+            CLF-driven horizontal detour of the CLF-aware planner).
+    Right : grouped bars of mean f_comm / f_loc / CLF-reward-per-step for every
+            policy, averaged over all UAVs -- the quantitative gain.
     """
     cfg = env.cfg
-    ref = _clf_stats(clf, ref_trajs, cfg)
-    mp = _clf_stats(clf, mappo_trajs, cfg)
+    stats = [_clf_stats(clf, p["trajs"], cfg) for p in policies]
 
-    fig = plt.figure(figsize=(13.5, 5.4))
-    gs = fig.add_gridspec(1, 2, width_ratios=[1.35, 1.0])
+    fig = plt.figure(figsize=(14.5, 5.6))
+    gs = fig.add_gridspec(1, 2, width_ratios=[1.3, 1.0])
 
     # --- left: top-down trajectories over the f_loc field --------------- #
     iz = _layer_index(env, 87.5)
@@ -222,56 +225,67 @@ def plot_policy_comparison(env, clf, marl, ref_trajs, mappo_trajs, outdir):
         axL.add_patch(plt.Rectangle((cx - lw / 2, cy - ww / 2), lw, ww,
                                     fill=False, ec="white", lw=1.0))
     axL.scatter(env.bs[:, 0], env.bs[:, 1], c="red", marker="^", s=55,
-                edgecolors="k", zorder=6, label="BS")
+                edgecolors="k", zorder=6)
     colors = plt.cm.tab10(np.linspace(0, 1, marl.U))
+    for p in policies:
+        lw = 2.6 if p is policies[-1] else 1.6
+        for n in range(marl.U):
+            pts = np.array([env.center_of(c) for c in p["trajs"][n]])
+            axL.plot(pts[:, 0], pts[:, 1], p["ls"], lw=lw, color=colors[n],
+                     alpha=0.9)
+        # start/goal markers once (from the highlighted policy's paths)
+    last = policies[-1]
     for n in range(marl.U):
-        rp = np.array([env.center_of(c) for c in ref_trajs[n]])
-        mpp = np.array([env.center_of(c) for c in mappo_trajs[n]])
-        axL.plot(rp[:, 0], rp[:, 1], "--", lw=1.6, color=colors[n], alpha=0.9,
-                 label=f"UAV{n+1} reference" if n == 0 else None)
-        axL.plot(mpp[:, 0], mpp[:, 1], "-", lw=2.4, color=colors[n],
-                 label=f"UAV{n+1} MAPPO" if n == 0 else None)
-        axL.scatter(*rp[0, :2], color=colors[n], marker="s", s=70,
+        s = np.array([env.center_of(c) for c in last["trajs"][n]])[0]
+        g = env.center_of(marl.goals[n])
+        axL.scatter(s[0], s[1], color=colors[n], marker="s", s=70,
                     edgecolors="k", zorder=7)
-        axL.scatter(*mpp[-1, :2], color=colors[n], marker="*", s=170,
+        axL.scatter(g[0], g[1], color=colors[n], marker="*", s=170,
                     edgecolors="k", zorder=7)
-    # Legend: dashed=reference, solid=MAPPO (style proxies, colour-agnostic).
+    # Legend: one line-style proxy per policy + start/goal markers.
     from matplotlib.lines import Line2D
-    proxies = [Line2D([0], [0], color="k", ls="--", lw=1.6, label="reference (CLF-blind)"),
-               Line2D([0], [0], color="k", ls="-", lw=2.4, label="MAPPO (CLF-aware)"),
-               Line2D([0], [0], color="k", marker="s", ls="", label="start"),
-               Line2D([0], [0], color="k", marker="*", ls="", ms=11, label="goal")]
+    proxies = [Line2D([0], [0], color="k", ls=p["ls"],
+                      lw=2.6 if p is policies[-1] else 1.6, label=p["name"])
+               for p in policies]
+    proxies += [Line2D([0], [0], color="k", marker="s", ls="", label="start"),
+                Line2D([0], [0], color="k", marker="*", ls="", ms=11, label="goal"),
+                Line2D([0], [0], color="red", marker="^", ls="", label="BS")]
     axL.legend(handles=proxies, loc="upper center", fontsize=8, ncol=2,
-               framealpha=0.9)
+               framealpha=0.92)
     axL.set_xlim(0, cfg.area[0]); axL.set_ylim(0, cfg.area[1])
     axL.set_xlabel("x (m)"); axL.set_ylabel("y (m)")
     axL.set_title("Top-down paths over $f_{loc}$ (z = %.0f m)\n"
-                  "MAPPO detours toward better-CLF voxels" % env.zs[iz])
+                  "color = UAV, line style = planner" % env.zs[iz])
     fig.colorbar(im, ax=axL, fraction=0.046, pad=0.04, label="$f_{loc}$")
 
-    # --- right: grouped bars, reference vs MAPPO ------------------------ #
+    # --- right: grouped bars, one group of bars per policy -------------- #
     axR = fig.add_subplot(gs[0, 1])
     labels = ["mean $f_{comm}$", "mean $f_{loc}$", "CLF reward\nper step"]
-    ref_vals = [ref[:, 0].mean(), ref[:, 1].mean(), ref[:, 2].mean()]
-    mp_vals = [mp[:, 0].mean(), mp[:, 1].mean(), mp[:, 2].mean()]
-    x = np.arange(len(labels)); w = 0.36
-    b1 = axR.bar(x - w / 2, ref_vals, w, label="reference (CLF-blind)",
-                 color="0.6", edgecolor="k")
-    b2 = axR.bar(x + w / 2, mp_vals, w, label="MAPPO (CLF-aware)",
-                 color="tab:green", edgecolor="k")
-    axR.axhline(0, color="k", lw=0.8)
-    for bars in (b1, b2):
+    x = np.arange(len(labels))
+    npol = len(policies)
+    w = 0.8 / npol
+    bar_colors = [p.get("bar", "0.6") for p in policies]
+    for i, (p, st) in enumerate(zip(policies, stats)):
+        vals = [st[:, 0].mean(), st[:, 1].mean(), st[:, 2].mean()]
+        off = (i - (npol - 1) / 2.0) * w
+        bars = axR.bar(x + off, vals, w, label=p["name"],
+                       color=bar_colors[i], edgecolor="k")
         for rect in bars:
             h = rect.get_height()
             axR.annotate(f"{h:.2f}", (rect.get_x() + rect.get_width() / 2, h),
                          ha="center", va="bottom" if h >= 0 else "top",
-                         fontsize=8, xytext=(0, 2 if h >= 0 else -2),
+                         fontsize=7, xytext=(0, 2 if h >= 0 else -2),
                          textcoords="offset points")
+    axR.axhline(0, color="k", lw=0.8)
     axR.set_xticks(x); axR.set_xticklabels(labels)
     axR.set_ylabel("value")
+    # Headroom so the negative CLF-reward labels are not clipped by the axis.
+    all_vals = [v for st in stats
+                for v in (st[:, 0].mean(), st[:, 1].mean(), st[:, 2].mean())]
+    axR.set_ylim(min(all_vals) - 0.18, max(all_vals) + 0.12)
     axR.set_title("CLF quality along path (mean over UAVs)\n"
                   "higher = better service quality")
-    axR.legend(fontsize=8, loc="lower right")
+    axR.legend(fontsize=8, loc="upper right")
     axR.grid(axis="y", alpha=0.3)
 
     fig.tight_layout()
