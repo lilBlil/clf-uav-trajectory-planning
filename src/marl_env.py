@@ -35,6 +35,20 @@ class MultiUAVEnv:
         self.starts = [env.snap_to_feasible(s) for s in cfg.starts_world[:self.U]]
         self.goals = [env.snap_to_feasible(g) for g in cfg.goals_world[:self.U]]
         self.goal_centers = [env.center_of(g) for g in self.goals]
+        # Arrival region per UAV: feasible voxels whose centre is within the
+        # physical radius cfg.arrival_radius of the goal centre (radius 0 -> just
+        # the goal voxel itself).  Precomputed as a set for O(1) step-time tests,
+        # so a finer grid simply has more voxels inside the SAME metric ball.
+        R = float(getattr(cfg, "arrival_radius", 0.0))
+        self.goal_regions = []
+        for gc, gcell in zip(self.goal_centers, self.goals):
+            if R <= 0.0:
+                self.goal_regions.append({tuple(gcell)})
+                continue
+            region = {tuple(c) for c in map(tuple, env.feasible_idx)
+                      if np.linalg.norm(env.center_of(c) - gc) <= R}
+            region.add(tuple(gcell))      # guarantee the goal voxel is included
+            self.goal_regions.append(region)
 
         # Geodesic distance-to-goal field per UAV, for potential-based shaping.
         # Phi_n(s) = -k * geo[n][cell] / shaping_norm.  Precomputed offline (one
@@ -49,7 +63,53 @@ class MultiUAVEnv:
         self.obs_dim = self._obs_dim()
         self.state_dim = self._self_feat_dim() * self.U
         self.n_actions = N_ACTIONS
+
+        # Optional reverse curriculum (off by default).  cfg.curriculum_stages>0
+        # builds, per UAV, a ladder of start voxels at geodesic fractions
+        # k/K * d_geo(real_start) of the way back from the goal -- so stage 0
+        # starts ON the goal (a few steps out), stage K at the true start.  This
+        # is the standard cure for the long-horizon sparse-reward wall: on a fine
+        # grid the +r_arrive bonus is otherwise never sampled (the goal-reaching
+        # chain is too long to stumble on), so the value fn never learns a
+        # near-goal gradient; starting near the goal lets the bonus fire, then we
+        # walk the start back as the policy improves.  ONLY the TRAINING start is
+        # moved -- eval/greedy_rollout always uses the real start (use_curriculum
+        # is forced False there), so the reported task is unchanged and the
+        # cross-resolution comparison stays fair.
+        self.curriculum_K = int(getattr(cfg, "curriculum_stages", 0))
+        self.stage = self.curriculum_K          # default = hardest (real start)
+        self.use_curriculum = False
+        if self.curriculum_K > 0:
+            self._build_curriculum()
         self.reset()
+
+    # --------------------------- curriculum ---------------------------- #
+    def _build_curriculum(self):
+        """Per-UAV start ladder: stage k -> a feasible voxel whose geodesic
+        distance to the goal is about k/K of the real start's distance."""
+        K = self.curriculum_K
+        self.stage_starts = []                  # [U][K+1] start cell per stage
+        for n in range(self.U):
+            geo = self.geo[n]
+            d_real = geo.get(tuple(self.starts[n]), np.inf)
+            reach = [(v, cell) for cell, v in geo.items() if np.isfinite(v)]
+            if not np.isfinite(d_real):
+                # Degenerate: just reuse the real start at every stage.
+                self.stage_starts.append([tuple(self.starts[n])] * (K + 1))
+                continue
+            ladder = []
+            for k in range(K + 1):
+                target = (k / K) * d_real
+                # closest reachable voxel to that geodesic distance to goal
+                ladder.append(tuple(min(reach, key=lambda it: abs(it[0] - target))[1]))
+            ladder[K] = tuple(self.starts[n])   # pin hardest stage to real start
+            self.stage_starts.append(ladder)
+
+    def set_stage(self, k):
+        """Activate curriculum stage k (0=near goal .. K=real start) for training."""
+        if self.curriculum_K > 0:
+            self.stage = int(np.clip(k, 0, self.curriculum_K))
+            self.use_curriculum = self.stage < self.curriculum_K
 
     # ----------------------- feature dimensions ----------------------- #
     def _self_feat_dim(self):
@@ -62,8 +122,14 @@ class MultiUAVEnv:
 
     # ------------------------------ reset ------------------------------ #
     def reset(self):
-        self.pos = [tuple(s) for s in self.starts]          # v_n(0) = v_n^s
-        self.prev_pos = [tuple(s) for s in self.starts]
+        # Curriculum-aware start: during training at stage k<K, launch from the
+        # stage-k start voxel (closer to the goal); otherwise the real start.
+        if self.use_curriculum:
+            src = [self.stage_starts[n][self.stage] for n in range(self.U)]
+        else:
+            src = [tuple(s) for s in self.starts]
+        self.pos = [tuple(s) for s in src]                  # v_n(0)
+        self.prev_pos = [tuple(s) for s in src]
         self.arrived = [False] * self.U
         self.t = 0
         self.trajs = [[self.pos[n]] for n in range(self.U)]
@@ -115,6 +181,10 @@ class MultiUAVEnv:
                          for n in range(self.U)])
 
     # ------------------------------ step ------------------------------- #
+    def _at_goal(self, n, cell):
+        """True if ``cell`` is within UAV n's arrival region (goal ball)."""
+        return tuple(cell) in self.goal_regions[n]
+
     def _apply_action(self, n, a):
         """Resolve action a for UAV n -> next cell (paper action space)."""
         cell = self.pos[n]
@@ -208,8 +278,21 @@ class MultiUAVEnv:
                 shaping = cfg.gamma * phi_new - phi_old
             else:
                 shaping = 0.0
-            just_arrived = (new_pos[n] == self.goals[n]) and not self.arrived[n]
-            rewards_n[n] = r_paper + shaping + (
+            # DENSE geodesic-progress reward (optional, replaces shaping when on):
+            # w_progress * (d_geo(old) - d_geo(new)) / voxel_size.  One voxel of
+            # advance toward the goal scores ~+w_progress at every resolution, so
+            # every step carries a clear gradient even when r_arrive is never hit.
+            if getattr(cfg, "use_progress", False):
+                d_old = self.geo[n].get(tuple(old_pos[n]), np.inf)
+                d_new = self.geo[n].get(tuple(new_pos[n]), np.inf)
+                if np.isfinite(d_old) and np.isfinite(d_new):
+                    progress = cfg.w_progress * (d_old - d_new) / cfg.voxel_size
+                else:
+                    progress = 0.0
+            else:
+                progress = 0.0
+            just_arrived = self._at_goal(n, new_pos[n]) and not self.arrived[n]
+            rewards_n[n] = r_paper + shaping + progress + (
                 cfg.r_arrive if just_arrived else 0.0)
 
         r = float(np.mean(rewards_n))                       # team average r(t)
@@ -218,7 +301,7 @@ class MultiUAVEnv:
         self.pos = new_pos
         for n in range(self.U):
             self.trajs[n].append(new_pos[n])
-            if new_pos[n] == self.goals[n]:
+            if self._at_goal(n, new_pos[n]):
                 self.arrived[n] = True
 
         self.t += 1

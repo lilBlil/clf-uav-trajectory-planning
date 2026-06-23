@@ -182,6 +182,22 @@ class Config:
     # observed to freeze 2/3 UAVs at k=28) still advance; the CLF terms (peak
     # ~1.0) keep bending the path toward better voxels without freezing it.
     shaping_coef: float = 38.0
+    # --- DENSE geodesic-progress reward (alternative to potential shaping) --- #
+    # use_progress=True replaces the potential-based shaping term with a DENSE
+    # per-step progress reward = w_progress * (d_geo(old) - d_geo(new)) / voxel,
+    # i.e. +~1 per voxel of advance toward the goal (diagonal ~+1.4), negative
+    # for retreat.  Dividing by the voxel size makes one step of progress score
+    # ~1 at EVERY resolution, so the navigation signal is resolution-independent.
+    # Unlike potential shaping (a deliberately weak, optimal-policy-preserving
+    # nudge whose only "reach the goal" drive is the sparse r_arrive bonus), this
+    # gives a strong gradient on EVERY step, so the value fn learns "toward goal =
+    # good" from episode 1 even when the goal-reaching chain is far too long to
+    # ever sample r_arrive (the long-horizon sparse-reward wall on fine grids,
+    # d<=10, where spherical arrival + entropy + budget + reverse curriculum ALL
+    # failed).  Off by default so the paper-faithful headline experiments are
+    # unchanged; turned on only for the resolution study.
+    use_progress: bool = False
+    w_progress: float = 1.0
     # One-off terminal reward for first reaching the goal.  This is the term
     # that actually MAKES REACHING OPTIMAL: under the paper's all-negative r(t)
     # the optimal policy is to hover in a high-CLF voxel, and potential-based
@@ -191,6 +207,30 @@ class Config:
     # terminal bonus it does NOT pollute the per-step CLF/energy trade-off the
     # paper studies: the agent still picks the best-CLF path to the goal.
     r_arrive: float = 50.0
+    # Arrival tolerance as a PHYSICAL radius (m): a UAV counts as arrived when
+    # its voxel centre is within arrival_radius of the goal centre, not only on
+    # the exact goal voxel.  radius = 0 recovers the exact-voxel rule (default,
+    # so all prior experiments are unchanged).  A fixed metric radius makes the
+    # arrival condition resolution-INDEPENDENT: with exact-voxel arrival a finer
+    # grid has a physically smaller target (a 15 m cube vs a 30 m cube), which is
+    # a hidden confound when sweeping voxel_size -- and it shrinks the basin of
+    # the sparse r_arrive bonus so the goal reward is almost never sampled on
+    # fine grids, starving the value function of any "near-goal = high value"
+    # signal.  A spherical tolerance equalises the physical target size and
+    # enlarges that basin on fine grids (R=25 m covers 1 voxel at d=30, ~7 at
+    # d=25, ~19 at d=15), giving the bonus a chance to bootstrap learning.
+    arrival_radius: float = 0.0
+    # Reverse-curriculum stages K (0 = OFF, the default, so all prior
+    # experiments are unchanged).  When K>0 the trainer starts each UAV near its
+    # goal and walks the start back over K stages to the real start (see
+    # MultiUAVEnv._build_curriculum).  This is the cure for the long-horizon
+    # sparse-reward wall on fine voxel grids, where the goal-reaching chain is
+    # too long for epsilon/entropy exploration to ever sample the r_arrive bonus
+    # (observed: d<=10 stays at 0 arrival even with a bigger budget + entropy +
+    # spherical arrival).  Only the TRAINING start moves; evaluation uses the
+    # real start, so the reported task and the cross-resolution comparison are
+    # unchanged.
+    curriculum_stages: int = 0
 
     # ----------------------------------------------------------------- #
     # Multi-UAV system (paper Sec. II-A / III)                           #

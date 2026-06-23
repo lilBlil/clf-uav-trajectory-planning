@@ -186,8 +186,23 @@ class MAPPO:
     def train(self, verbose=True):
         """Main MAPPO loop (Algorithm 1, lines 2-20)."""
         cfg = self.cfg
+        # Reverse curriculum schedule: if the env has K>0 stages, spend the first
+        # HALF of the budget ramping the start from stage 0 (near goal) to stage
+        # K (real start), then hold at the real start for the FINAL HALF so the
+        # policy gets ample training on the ACTUAL task.  An earlier 80/20 split
+        # broke the wall (training peak arrival hit 1.0 in the near-goal stages)
+        # but FAILED TO GENERALISE: with only 20% spent at the real start the
+        # greedy rollout from the true start still stranded every UAV.  Giving
+        # the real-start stage half the budget lets the learned near-goal value
+        # gradient propagate back to the start region.  No-op when curriculum off.
+        K = getattr(self.env, "curriculum_K", 0)
+        ramp_end = 0.5 * cfg.epi_max
+
         episode = 0
         while episode < cfg.epi_max:
+            if K > 0:
+                frac = min(1.0, episode / ramp_end) if ramp_end > 0 else 1.0
+                self.env.set_stage(int(np.floor(frac * K)))
             batch, infos = [], []
             for _ in range(cfg.rollouts_per_update):
                 traj, info = self.collect_episode()
@@ -217,6 +232,10 @@ class MAPPO:
     # -------------------------- greedy rollout ------------------------- #
     def greedy_rollout(self):
         """Deterministic rollout (argmax policy) for trajectory visualization."""
+        # Always evaluate on the REAL task: force the hardest curriculum stage
+        # (= real start), independent of whatever stage training left active.
+        if getattr(self.env, "curriculum_K", 0) > 0:
+            self.env.set_stage(self.env.curriculum_K)
         obs, state = self.env.reset()
         min_d = [np.inf] * self.env.U
         for _ in range(self.cfg.max_steps):

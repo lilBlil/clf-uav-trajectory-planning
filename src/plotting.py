@@ -197,66 +197,87 @@ def _clf_stats(clf, trajs, cfg):
     return np.array(stats)
 
 
+def _fingerprint_profile(clf, trajs, field, n_grid=40):
+    """Mean fingerprint vs NORMALISED path progress, averaged over UAVs.
+
+    Each UAV path has a different length, so we resample every path onto a
+    common [0,1] progress grid (0 = start, 1 = goal) by linear interpolation,
+    then average across UAVs.  Returns (progress, mean, std) over n_grid points.
+    """
+    f = clf.f_comm if field == "comm" else clf.f_loc
+    grid = np.linspace(0.0, 1.0, n_grid)
+    resampled = []
+    for tr in trajs:
+        vals = np.array([f[tuple(c)] for c in tr])
+        if len(vals) == 1:
+            resampled.append(np.full(n_grid, vals[0]))
+        else:
+            src = np.linspace(0.0, 1.0, len(vals))
+            resampled.append(np.interp(grid, src, vals))
+    arr = np.array(resampled)
+    return grid, arr.mean(axis=0), arr.std(axis=0)
+
+
 def plot_policy_comparison(env, clf, marl, policies, outdir):
     """Compare several planners on the same scenario.
 
     ``policies`` is a list of dicts, each:
-        {"name": str, "trajs": [traj per UAV], "color": str, "ls": "-"|"--"}
+        {"name": str, "trajs": [traj per UAV], "bar": color, "ls": "-"|"--"}
     drawn in order; the LAST one is treated as the highlighted method (MAPPO).
 
-    Left  : top-down paths of all policies over the f_loc field (shows the
-            CLF-driven horizontal detour of the CLF-aware planner).
+    Left  : 3D trajectories of all policies through the city skyline (line style
+            = planner, color = UAV) -- shows the climb-over / detour in 3D.
     Right : grouped bars of mean f_comm / f_loc / CLF-reward-per-step for every
             policy, averaged over all UAVs -- the quantitative gain.
     """
     cfg = env.cfg
     stats = [_clf_stats(clf, p["trajs"], cfg) for p in policies]
 
-    fig = plt.figure(figsize=(14.5, 5.6))
-    gs = fig.add_gridspec(1, 2, width_ratios=[1.3, 1.0])
+    fig = plt.figure(figsize=(15.0, 6.2))
+    gs = fig.add_gridspec(1, 2, width_ratios=[1.25, 1.0])
 
-    # --- left: top-down trajectories over the f_loc field --------------- #
-    iz = _layer_index(env, 87.5)
-    axL = fig.add_subplot(gs[0, 0])
-    im = axL.imshow(clf.f_loc[:, :, iz].T, origin="lower", cmap="viridis",
-                    vmin=0, vmax=1, alpha=0.85,
-                    extent=[0, cfg.area[0], 0, cfg.area[1]])
+    # --- left: 3D trajectories through the city ------------------------- #
+    axL = fig.add_subplot(gs[0, 0], projection="3d")
+    seen = {}
     for (cx, cy, cz), (lw, ww, hh) in cfg.buildings:
-        axL.add_patch(plt.Rectangle((cx - lw / 2, cy - ww / 2), lw, ww,
-                                    fill=False, ec="white", lw=1.0))
-    axL.scatter(env.bs[:, 0], env.bs[:, 1], c="red", marker="^", s=55,
-                edgecolors="k", zorder=6)
+        top = cz + hh / 2.0
+        label, color = _height_class(env, top)
+        _draw_box(axL, cx, cy, cz, lw, ww, hh, color=color, alpha=0.18)
+        seen[label] = color
+    axL.scatter(env.bs[:, 0], env.bs[:, 1], env.bs[:, 2],
+                c="red", marker="^", s=70, depthshade=False)
     colors = plt.cm.tab10(np.linspace(0, 1, marl.U))
     for p in policies:
-        lw = 2.6 if p is policies[-1] else 1.6
+        lw = 2.6 if p is policies[-1] else 1.5
         for n in range(marl.U):
             pts = np.array([env.center_of(c) for c in p["trajs"][n]])
-            axL.plot(pts[:, 0], pts[:, 1], p["ls"], lw=lw, color=colors[n],
-                     alpha=0.9)
-        # start/goal markers once (from the highlighted policy's paths)
+            axL.plot(pts[:, 0], pts[:, 1], pts[:, 2], p["ls"], lw=lw,
+                     color=colors[n], alpha=0.9)
+    # start (square) / goal (star) markers from the highlighted policy.
     last = policies[-1]
     for n in range(marl.U):
         s = np.array([env.center_of(c) for c in last["trajs"][n]])[0]
         g = env.center_of(marl.goals[n])
-        axL.scatter(s[0], s[1], color=colors[n], marker="s", s=70,
-                    edgecolors="k", zorder=7)
-        axL.scatter(g[0], g[1], color=colors[n], marker="*", s=170,
-                    edgecolors="k", zorder=7)
-    # Legend: one line-style proxy per policy + start/goal markers.
+        axL.scatter(*s, color=colors[n], marker="s", s=70,
+                    edgecolors="k", depthshade=False)
+        axL.scatter(*g, color=colors[n], marker="*", s=180,
+                    edgecolors="k", depthshade=False)
+    axL.set_xlim(0, cfg.area[0]); axL.set_ylim(0, cfg.area[1])
+    axL.set_zlim(0, cfg.area[2])
+    axL.set_xlabel("x (m)"); axL.set_ylabel("y (m)"); axL.set_zlabel("z (m)")
+    axL.set_title("3D paths through the city\ncolor = UAV, line style = planner")
+    # Legend: planner line styles + markers + building height classes.
     from matplotlib.lines import Line2D
+    from matplotlib.patches import Patch
     proxies = [Line2D([0], [0], color="k", ls=p["ls"],
-                      lw=2.6 if p is policies[-1] else 1.6, label=p["name"])
+                      lw=2.6 if p is policies[-1] else 1.5, label=p["name"])
                for p in policies]
     proxies += [Line2D([0], [0], color="k", marker="s", ls="", label="start"),
                 Line2D([0], [0], color="k", marker="*", ls="", ms=11, label="goal"),
                 Line2D([0], [0], color="red", marker="^", ls="", label="BS")]
-    axL.legend(handles=proxies, loc="upper center", fontsize=8, ncol=2,
-               framealpha=0.92)
-    axL.set_xlim(0, cfg.area[0]); axL.set_ylim(0, cfg.area[1])
-    axL.set_xlabel("x (m)"); axL.set_ylabel("y (m)")
-    axL.set_title("Top-down paths over $f_{loc}$ (z = %.0f m)\n"
-                  "color = UAV, line style = planner" % env.zs[iz])
-    fig.colorbar(im, ax=axL, fraction=0.046, pad=0.04, label="$f_{loc}$")
+    proxies += [Patch(facecolor=c, edgecolor="k", alpha=0.5, label=l)
+                for l, c in seen.items()]
+    axL.legend(handles=proxies, loc="upper left", fontsize=7, ncol=2)
 
     # --- right: grouped bars, one group of bars per policy -------------- #
     axR = fig.add_subplot(gs[0, 1])
@@ -289,8 +310,16 @@ def plot_policy_comparison(env, clf, marl, policies, outdir):
     axR.grid(axis="y", alpha=0.3)
 
     fig.tight_layout()
+    fig.canvas.draw()
+    renderer = fig.canvas.get_renderer()
     path = os.path.join(outdir, "policy_comparison.png")
-    fig.savefig(path, dpi=150); plt.close(fig)
+    fig.savefig(path, dpi=150)
+    # Save the two panels independently for the split-figure layout in the paper.
+    for ax, name in [(axL, "policy_comparison_3d"), (axR, "policy_comparison_bars")]:
+        ext = ax.get_window_extent(renderer).transformed(fig.dpi_scale_trans.inverted())
+        fig.savefig(os.path.join(outdir, f"{name}.png"),
+                    dpi=150, bbox_inches=ext.expanded(1.05, 1.05))
+    plt.close(fig)
     return path
 
 
@@ -313,4 +342,224 @@ def plot_training_curves(history, outdir):
     fig.tight_layout()
     path = os.path.join(outdir, "training_curves.png")
     fig.savefig(path, dpi=150); plt.close(fig)
+    return path
+
+
+def plot_policy_training_curves(variants, outdir, baselines=None):
+    """Overlay the learning curves of several trained planners.
+
+    ``variants`` is a list of dicts, each:
+        {"name": str, "history": MAPPO.history, "color": str, "ls": "-"}
+    ``baselines`` (optional) is a list of dicts for non-learning planners drawn
+    as horizontal reference lines:
+        {"name": str, "f_comm": float, "f_loc": float, "arrived": float,
+         "color": str}
+
+    Four panels over training updates: goal-arrival fraction, CLF service
+    quality, mean f_comm, mean f_loc.
+
+    NOTE: we deliberately do NOT plot raw team return.  The no-CLF and full-CLF
+    variants optimize DIFFERENT reward functions (full-CLF carries the extra,
+    always-<=0, CLF penalty term), so their returns live on different scales and
+    a higher no-CLF return does NOT mean a better plan.  Instead we plot a
+    COMMON-yardstick "CLF service quality" = (f_comm-1)+(f_loc-1), recomputed
+    identically from every variant's fingerprint history, so the curves are
+    directly comparable -- and full-CLF wins, as expected.
+    """
+    # Common-yardstick CLF service quality per update (full unit weights).
+    def clf_quality(hist):
+        fc = np.asarray(hist["f_comm"]); fl = np.asarray(hist["f_loc"])
+        return (fc - 1.0) + (fl - 1.0)
+
+    panels = [("arrived", "Goal-arrival fraction"),
+              ("clf_quality", r"CLF service quality $(f_{comm}\!-\!1)+(f_{loc}\!-\!1)$"),
+              ("f_comm", r"Mean $f_{comm}$ along path"),
+              ("f_loc", r"Mean $f_{loc}$ along path")]
+    fig, axes = plt.subplots(2, 2, figsize=(12, 8))
+    for ax, (key, title) in zip(axes.ravel(), panels):
+        for v in variants:
+            hist = v["history"]
+            y = clf_quality(hist) if key == "clf_quality" else hist[key]
+            ax.plot(np.arange(len(y)), y, v.get("ls", "-"),
+                    color=v.get("color", "tab:blue"), lw=2.0, label=v["name"])
+        # static planners: horizontal reference line where the metric is defined
+        for b in (baselines or []):
+            if key == "clf_quality" and {"f_comm", "f_loc"} <= b.keys():
+                bval = (b["f_comm"] - 1.0) + (b["f_loc"] - 1.0)
+                ax.axhline(bval, ls="--", lw=1.4, color=b.get("color", "0.5"),
+                           label=f"{b['name']} ({bval:.2f})")
+            elif key in b and b[key] is not None:
+                ax.axhline(b[key], ls="--", lw=1.4, color=b.get("color", "0.5"),
+                           label=f"{b['name']} ({b[key]:.2f})")
+        if key == "arrived":
+            ax.set_ylim(-0.02, 1.05)
+        ax.set_title(title); ax.set_xlabel("training update")
+        ax.grid(alpha=0.3)
+        ax.legend(fontsize=8, loc="best", framealpha=0.92)
+    fig.suptitle("Training curves: CLF-aware vs no-CLF MAPPO "
+                 "(reference = CLF-blind greedy, no training)", fontsize=11)
+    fig.tight_layout(rect=(0, 0, 1, 0.97))
+    path = os.path.join(outdir, "policy_training_curves.png")
+    fig.savefig(path, dpi=150); plt.close(fig)
+    return path
+
+
+def plot_resolution_comparison(df, res_list, outdir):
+    """Performance + cost vs voxel grid resolution (voxel_size).
+
+    ``df`` is the per-(resolution, seed) table built by compare_resolutions.py;
+    ``res_list`` is the resolutions to show, coarse -> fine.  Six panels share a
+    common x = voxel_size (m): the TOP row is PLANNING QUALITY (full-arrival
+    rate, mean f_comm / f_loc, collisions) with mean +/- std over seeds; the
+    BOTTOM row is the COST that buys it (feasible-voxel count, train wall time)
+    and the horizon the scaling rule assigns.  Reading the two rows together
+    shows the resolution trade-off: finer grids give smoother CLF service but
+    cost more voxels / compute and a longer horizon to learn over.
+    """
+    res = sorted(res_list, reverse=True)        # coarse (left) -> fine (right)
+
+    def agg(col):
+        """mean, std of ``col`` over seeds, one entry per resolution in ``res``."""
+        m = [df[df.voxel_size == d][col].mean() for d in res]
+        s = [df[df.voxel_size == d][col].std() for d in res]
+        return np.array(m), np.array(s)
+
+    x = np.array(res)
+    # Which resolutions have a TRUE spherical tolerance (>1 voxel in the arrival
+    # ball) vs degenerate exact-voxel arrival (ball smaller than one voxel).
+    # Drawn filled vs hollow so the reader sees where the metric tolerance is
+    # consistent.  region_size absent (old CSV) -> treat as exact-voxel.
+    if "region_size" in df.columns:
+        rsize = np.array([df[df.voxel_size == d]["region_size"].mean()
+                          for d in res])
+    else:
+        rsize = np.ones(len(res))
+    is_ball = rsize > 1.5
+    R = float(df["arrival_radius"].iloc[0]) if "arrival_radius" in df.columns \
+        else 0.0
+
+    fig, axes = plt.subplots(2, 3, figsize=(15, 9))
+
+    def line(ax, col, title, ylabel, color, pct=False, lo=None, hi=None):
+        m, s = agg(col)
+        ax.errorbar(x, m, yerr=s, lw=2.0, color=color, capsize=4, capthick=1.3,
+                    zorder=2)
+        ax.scatter(x[is_ball], m[is_ball], s=55, color=color, zorder=3)
+        ax.scatter(x[~is_ball], m[~is_ball], s=55, facecolors="white",
+                   edgecolors=color, linewidths=1.6, zorder=3)
+        ax.set_title(title); ax.set_xlabel("voxel size  $\Delta$ (m)")
+        ax.set_ylabel(ylabel)
+        ax.set_xticks(x); ax.invert_xaxis()      # fine grid on the right
+        ax.grid(alpha=0.3)
+        if lo is not None:
+            ax.set_ylim(lo, hi)
+        return m
+
+    # --- top row: PLANNING QUALITY ---------------------------------------- #
+    line(axes[0, 0], "full_arrival", "Full-arrival rate (all UAVs)",
+         "fraction of seeds", "tab:green", lo=-0.03, hi=1.05)
+
+    ax = axes[0, 1]
+    fc_m, fc_s = agg("f_comm"); fl_m, fl_s = agg("f_loc")
+    ax.errorbar(x, fc_m, yerr=fc_s, lw=2.0, color="tab:blue",
+                capsize=4, label=r"$f_{comm}$", zorder=2)
+    ax.errorbar(x, fl_m, yerr=fl_s, lw=2.0, color="tab:orange",
+                capsize=4, label=r"$f_{loc}$", zorder=2)
+    for m, c in ((fc_m, "tab:blue"), (fl_m, "tab:orange")):
+        ax.scatter(x[is_ball], m[is_ball], s=55, color=c, zorder=3)
+        ax.scatter(x[~is_ball], m[~is_ball], s=55, facecolors="white",
+                   edgecolors=c, linewidths=1.6, zorder=3)
+    ax.set_title("Mean CLF along greedy path"); ax.set_xlabel("voxel size  $\Delta$ (m)")
+    ax.set_ylabel("fingerprint value"); ax.set_xticks(x); ax.invert_xaxis()
+    ax.grid(alpha=0.3); ax.legend(fontsize=10, loc="best")
+
+    line(axes[0, 2], "collisions", "Collisions (greedy rollout)",
+         "collision count", "tab:red", lo=-0.05)
+
+    # --- bottom row: COST of the resolution ------------------------------- #
+    line(axes[1, 0], "n_feasible", "Feasible voxels $|V_f|$ (problem size)",
+         "voxel count", "0.35")
+    line(axes[1, 1], "train_s", "Training wall time", "seconds", "tab:purple")
+    line(axes[1, 2], "max_steps", "Horizon $T$ (scaled $\propto 1/\Delta$)",
+         "max steps", "tab:brown")
+
+    # Footnote: arrival tolerance + marker legend, only when a radius is in use.
+    if R > 0:
+        sub = (f"arrival ball R={R:g} m  (filled = true spherical tolerance, "
+               f"hollow = ball $<$ 1 voxel $\\to$ exact-voxel arrival);  "
+               f"horizon + shaping scaled $\propto 1/\Delta$;  "
+               f"mean $\pm$ std over seeds")
+    else:
+        sub = ("horizon + shaping scaled $\propto 1/\Delta$;  "
+               "mean $\pm$ std over seeds")
+    fig.suptitle("MAPPO CLF-planning vs voxel grid resolution\n" + sub,
+                 fontsize=12)
+    fig.tight_layout(rect=(0, 0, 1, 0.96))
+    path = os.path.join(outdir, "resolution_comparison.png")
+    fig.savefig(path, dpi=150); plt.close(fig)
+    return path
+
+
+def plot_resolution_training_curves(histories, res_list, rollouts_per_update,
+                                    outdir):
+    """Overlay MAPPO learning curves for each voxel resolution.
+
+    ``histories`` maps voxel_size -> list of MAPPO.history dicts (one per seed).
+    Four panels vs training episodes -- team return, goal-arrival fraction, mean
+    f_comm, mean f_loc -- each resolution drawn as one colored line (mean over
+    seeds) with a +/- std band.  Unlike resolution_comparison.png (final value
+    per resolution) this shows HOW each grid converges: a finer grid that learns
+    more slowly, or stalls at zero arrival, is visible here as a flat curve.
+
+    All resolutions share the same epi_max (only horizon + shaping scale with
+    Delta), so the x-axes align and the curves are directly comparable.
+    """
+    res = sorted(res_list, reverse=True)        # coarse -> fine
+    # Color by resolution: coarse = cool, fine = warm (viridis over the set).
+    cmap = plt.cm.viridis
+    colors = {d: cmap(i / max(1, len(res) - 1)) for i, d in enumerate(res)}
+
+    def stack(hs, key):
+        series = [np.asarray(h[key]) for h in hs]
+        L = min(len(s) for s in series)
+        return np.stack([s[:L] for s in series], axis=0)
+
+    def ema(x, a=0.12):
+        y = np.empty_like(x, dtype=float); y[0] = x[0]
+        for i in range(1, len(x)): y[i] = a*x[i] + (1-a)*y[i-1]
+        return y
+
+    panels = [("reward", "Team episode return"),
+              ("arrived", "Goal-arrival fraction"),
+              ("f_comm", r"Mean $f_{comm}$ along path"),
+              ("f_loc", r"Mean $f_{loc}$ along path")]
+    fig, axes = plt.subplots(2, 2, figsize=(13, 9))
+    for ax, (key, title) in zip(axes.ravel(), panels):
+        for d in res:
+            hs = histories.get(d, [])
+            if not hs:
+                continue
+            data = stack(hs, key)
+            mean, std = ema(data.mean(axis=0)), ema(data.std(axis=0))
+            x = (np.arange(len(mean)) + 1) * rollouts_per_update
+            c = colors[d]
+            ax.plot(x, mean, color=c, lw=2.0,
+                    label=f"$\Delta$={d:g} m (n={len(hs)})")
+            ax.fill_between(x, mean - std, mean + std, color=c, alpha=0.15)
+        ax.set_title(title); ax.set_xlabel("training episodes")
+        ax.grid(alpha=0.3)
+    axes.ravel()[1].set_ylim(-0.02, 1.05)
+    axes.ravel()[0].legend(fontsize=9, loc="best", title="voxel resolution")
+    fig.suptitle("MAPPO training curves across voxel resolutions  "
+                 "(horizon + shaping scaled $\propto 1/\Delta$; "
+                 "equal episode budget; mean $\pm$ std over seeds)", fontsize=12)
+    fig.tight_layout(rect=(0, 0, 1, 0.96))
+    fig.canvas.draw()
+    path = os.path.join(outdir, "resolution_training_curves.png")
+    fig.savefig(path, dpi=150)
+    ext = axes.ravel()[0].get_window_extent(fig.canvas.get_renderer())
+    fig.savefig(os.path.join(outdir, "resolution_training_return.png"),
+                dpi=150, bbox_inches=ext.transformed(
+                    fig.dpi_scale_trans.inverted()).expanded(1.08, 1.08))
+    plt.close(fig)
     return path

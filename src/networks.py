@@ -39,13 +39,17 @@ class Adam:
 class MLP:
     """Two-hidden-layer tanh MLP with cached forward for manual backprop."""
 
-    def __init__(self, in_dim, hidden, out_dim, lr, seed=0):
+    def __init__(self, in_dim, hidden, out_dim, lr, seed=0, out_scale=0.1):
         rng = np.random.default_rng(seed)
         def he(a, b):
             return rng.standard_normal((a, b)) * np.sqrt(2.0 / a)
         self.W1, self.b1 = he(in_dim, hidden), np.zeros(hidden)
         self.W2, self.b2 = he(hidden, hidden), np.zeros(hidden)
-        self.W3, self.b3 = he(hidden, out_dim) * 0.1, np.zeros(out_dim)
+        # out_scale shrinks the output layer at init.  0.1 keeps actor/critic/Q
+        # outputs near zero at start (small logits / V ~ 0); QMIX hypernetworks
+        # override it to ~1.0 so the mixer weights start O(1) and gradient
+        # actually reaches the agent Q-network (a 0.1-scaled mixer starves it).
+        self.W3, self.b3 = he(hidden, out_dim) * out_scale, np.zeros(out_dim)
         self.params = [self.W1, self.b1, self.W2, self.b2, self.W3, self.b3]
         self.opt = Adam(self.params, lr)
 
