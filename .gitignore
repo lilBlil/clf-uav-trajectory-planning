@@ -26,6 +26,18 @@ htmlcov/
 # These are reproducible from `python main.py`; keep them out of version control.
 outputs/
 
+# ---- LaTeX build artifacts ----
+*.aux
+*.log
+*.fls
+*.fdb_latexmk
+*.xdv
+*.synctex.gz
+*.out
+*.toc
+*.bbl
+*.blg
+
 # ---- IDE / editor ----
 .vscode/
 .idea/
