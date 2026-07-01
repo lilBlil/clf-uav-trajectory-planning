@@ -96,7 +96,20 @@ class Config:
     # ----------------------------------------------------------------- #
     # B. Communication model (paper Sec. II-B)                           #
     # ----------------------------------------------------------------- #
-    P_m: float = 1.0            # BS transmit power (W)  P_m   (= 30 dBm)
+    P_m: float = 1.0            # legacy BS power (W) -- fallback if P_comm/P_loc
+                                # are not set; kept so old configs still work.
+    # Decoupled comm / localization transmit powers.  Communication capacity C
+    # and TDOA localization CRLB both scale with SNR = P*G/sigma^2, but the comm
+    # link and the positioning (ranging) link are physically distinct signals
+    # that can use DIFFERENT powers/bandwidths in a real ILAC system.  Coupling
+    # them (one P_m) made C and L impossible to set independently: dropping power
+    # to bring C into the ~1 Mbps range also destroyed L (>180 m).  We therefore
+    # decouple them -- C uses P_comm, CRLB uses P_loc -- so each metric lands in
+    # its target band.  Calibrated (see clf.py distributions):
+    #   P_comm = -20 dBm  -> C  median ~ 1.22 Mbps   (comm target 1-10 Mbps)
+    #   P_loc  =  17 dBm  -> L  median ~ 8.22 m       (loc  target 10-1 m)
+    P_comm: float = 10 ** ((-20.0 - 30.0) / 10.0)   # -20 dBm in W
+    P_loc: float = 10 ** ((17.0 - 30.0) / 10.0)     #  17 dBm in W
     f_c: float = 2.6e9          # carrier frequency  f_c  (Hz)
     B: float = 10e6             # communication bandwidth  B  (Hz)
     noise_psd_dbm_hz: float = -174.0  # thermal noise PSD (dBm/Hz)
@@ -153,6 +166,29 @@ class Config:
     w_L: float = 1.0            # localization weight  w_L
     w_E: float = 0.3            # energy weight  w_E
     lambda_coll: float = 5.0    # collision penalty strength  lambda_coll
+    # ----------------------------------------------------------------- #
+    # Comm-loc reward DESIGN selector (the only axis on which the proposed     #
+    # CLF planner and the independent GeoAgg-HSAC baseline differ).            #
+    #   "clf"        : the proposed CLF fingerprint reward (sigmoid f_comm/f_loc)
+    #   "geoagg_log" : GeoAgg-HSAC's potential-based stepwise-LOG reward on the
+    #                  RAW physical quantities (capacity C, loc performance 1/L),
+    #                  i.e. the baseline's OWN reward, NOT the CLF fingerprint.
+    # Both share the navigation/energy/collision/arrival terms so a fair
+    # comparison varies only the comm-loc term design.  See marl_env.step /
+    # _geoagg_commloc_reward.  Evaluation always uses the NEUTRAL physical
+    # metrics C (bit/s) and L=sqrt(CRLB) (m), which favour neither design.
+    reward_mode: str = "clf"
+    # GeoAgg log-reward parameters (paper Eq.18-20).  gamma_r is the target
+    # capacity around which f(C)=+/-log10(C/gamma_r) flips sign; set to the
+    # MEDIAN feasible-voxel capacity so it coincides with the CLF calibration
+    # centre (neither method is favoured).  geoagg_lperf_scale normalises the
+    # 1/L performance difference to keep r^l on the same O(1) scale as r^c;
+    # geoagg_log_floor caps the log term for no-link (C->0) voxels.
+    geoagg_gamma_r: float = 1.22e6      # target rate gamma_r (bit/s) ~ median C
+    geoagg_lperf_scale: float = 0.122   # ~ median 1/L, so r^l is O(1)
+    geoagg_log_floor: float = 3.0      # clip |f(C)| (no-link voxels)
+    geoagg_commloc_weight: float = 0.3  # scale the comm-loc term so it doesn't
+                                # overpower navigation shaping (~2.3/step)
     # Potential-based reward shaping (Ng et al. 1999), NOT in the paper's r(t).
     # Shaping term F = gamma*Phi(s') - Phi(s) with potential
     #   Phi_n(s) = -d_geo(pos_n, goal_n) / shaping_norm
@@ -269,6 +305,7 @@ class Config:
     hidden: int = 128           # MLP hidden width
     entropy_coef: float = 0.01  # entropy bonus coefficient
     rollouts_per_update: int = 8   # episodes collected per gradient update
+    eval_interval: int = 40        # greedy eval every N episodes (training curves)
     minibatch: int = 256        # SGD minibatch size
     seed: int = 0
 

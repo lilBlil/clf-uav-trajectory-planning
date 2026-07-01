@@ -39,16 +39,23 @@ class CLFMap:
 
     # ------------------------------------------------------------------ #
     def _snr_to_bs(self, p):
-        """SNR_{i,m} for every BS m at voxel centre p (paper Sec. II-B).
+        """Comm and localization SNR for every BS m at voxel centre p.
 
-        G_{i,m} = beta_0 d^{-alpha};  SNR = P_m G / sigma_0^2.
-        Returns (snr, dist) arrays of length N_G.
+        G_{i,m} = beta_0 d^{-alpha}.  The communication link and the TDOA
+        ranging link are DECOUPLED: they share the geometry/gain G but use
+        different transmit powers (cfg.P_comm for capacity, cfg.P_loc for the
+        CRLB), so C and L can be calibrated into independent target bands (see
+        config).  Falls back to cfg.P_m for either if P_comm/P_loc are absent.
+        Returns (snr_comm, snr_loc, dist), each of length N_G.
         """
         d = np.linalg.norm(self.env.bs - p, axis=1)
         d = np.maximum(d, 1.0)        # avoid singularity within 1 m
         G = self.cfg.beta0 * d ** (-self.cfg.alpha)
-        snr = self.cfg.P_m * G / self.cfg.sigma0_sq
-        return snr, d
+        P_comm = getattr(self.cfg, "P_comm", self.cfg.P_m)
+        P_loc = getattr(self.cfg, "P_loc", self.cfg.P_m)
+        snr_comm = P_comm * G / self.cfg.sigma0_sq
+        snr_loc = P_loc * G / self.cfg.sigma0_sq
+        return snr_comm, snr_loc, d
 
     def _visible_set(self, p, d):
         """Indices of BSs in M_i: within d_max^comm AND with LOS (paper Sec II-B)."""
@@ -133,16 +140,17 @@ class CLFMap:
         # --- pass 1: raw capacity / localization error per voxel ---------- #
         for cell in map(tuple, self.env.feasible_idx):
             p = self.env.center_of(cell)
-            snr, d = self._snr_to_bs(p)
+            snr_comm, snr_loc, d = self._snr_to_bs(p)
             vis = self._visible_set(p, d)
             n_vis = len(vis)
             self.M_count[cell] = n_vis
             if n_vis >= 1:
-                # Capacity C(v_i) = max_m B log2(1 + SNR_{i,m}).
-                R = self.cfg.B * np.log2(1.0 + snr[vis])
+                # Capacity C(v_i) = max_m B log2(1 + SNR_comm_{i,m}).
+                R = self.cfg.B * np.log2(1.0 + snr_comm[vis])
                 self.C[cell] = float(np.max(R))
             if n_vis >= 4:
-                crlb = self._crlb(p, vis, snr)
+                # CRLB uses the localization-link SNR (decoupled from comm).
+                crlb = self._crlb(p, vis, snr_loc)
                 self.L[cell] = float(np.sqrt(crlb)) if np.isfinite(crlb) else np.inf
 
         # --- auto-calibrate the sigmoid thresholds from the distributions -- #

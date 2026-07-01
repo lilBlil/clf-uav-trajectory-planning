@@ -31,6 +31,20 @@ class MultiUAVEnv:
         # Max single-step energy E_max = corner move = sqrt(3) * Delta.
         self.E_max = np.sqrt(3.0) * cfg.voxel_size
 
+        # Comm/loc PERCEPTION channels the policy observes (see _commloc_perception).
+        # The proposed CLF planner perceives the fingerprint F=(f_comm,f_loc); the
+        # GeoAgg baseline (reward_mode="geoagg_log") must instead perceive the RAW
+        # physical quantities its own state s_t is built on (channel gain / capacity
+        # + localization performance), NOT our CLF fingerprint -- otherwise the
+        # baseline is still fed the proposed representation and the comparison is
+        # self-validating.  Normalise raw C and 1/L by their calibration centres
+        # (median capacity / median 1/L) so the two channels are O(1); this is a
+        # pure numeric rescale and introduces no CLF information.
+        self._commloc_norm = (
+            max(float(getattr(cfg, "geoagg_gamma_r", 1.0)), 1e-9),
+            max(float(getattr(cfg, "geoagg_lperf_scale", 1.0)), 1e-9),
+        )
+
         # Snap configured start/goal world coords to feasible voxels.
         self.starts = [env.snap_to_feasible(s) for s in cfg.starts_world[:self.U]]
         self.goals = [env.snap_to_feasible(g) for g in cfg.goals_world[:self.U]]
@@ -112,12 +126,25 @@ class MultiUAVEnv:
             self.use_curriculum = self.stage < self.curriculum_K
 
     # ----------------------- feature dimensions ----------------------- #
+    def _is_geo(self):
+        return getattr(self.cfg, "reward_mode", "clf") == "geoagg_log"
+
     def _self_feat_dim(self):
-        # normalized pos(3) + F(2) + goal-unit(3) + goal-dist(1) + arrived(1)
+        if self._is_geo():
+            # GeoAgg state s_t (per UAV): pos(3) + raw (C, 1/L)(2) + LoS link
+            # count |D_hat|(1) + shared goal-unit(3) + goal-dist(1) + arrived(1).
+            return 11
+        # CLF: normalized pos(3) + F(2) + goal-unit(3) + goal-dist(1) + arrived(1)
         return 10
 
     def _obs_dim(self):
-        # self features + per-action (f_comm, f_loc, feasible) over 27 actions
+        if self._is_geo():
+            # GeoAgg observes ONLY its own cell's physical/geometric state, not a
+            # 27-neighbour preview (that adjacency-CLF scan is the proposed
+            # method's own perception mechanism).  Feasibility is still enforced
+            # via action_masks() at action selection, not fed as an observation.
+            return self._self_feat_dim()
+        # CLF: self features + per-action (f_comm, f_loc, feasible) over 27 actions
         return self._self_feat_dim() + 3 * N_ACTIONS
 
     # ------------------------------ reset ------------------------------ #
@@ -133,32 +160,78 @@ class MultiUAVEnv:
         self.arrived = [False] * self.U
         self.t = 0
         self.trajs = [[self.pos[n]] for n in range(self.U)]
+        # For the GeoAgg-style stepwise-log reward (reward_mode="geoagg_log"):
+        # cache the previous-step raw physical quantities per UAV so the reward
+        # can use f(C_t)-f(C_{t-1}) and L_perf_t - L_perf_{t-1} (paper Eq.18/20).
+        # Initialised at the start voxel so the first step's difference is 0.
+        self._prev_C = [self._raw_C(s) for s in src]
+        self._prev_Lperf = [self._raw_Lperf(s) for s in src]
         return self.get_obs(), self.get_state()
+
+    # ----------------- raw physical quantities (GeoAgg reward) --------- #
+    def _raw_C(self, cell):
+        """Shannon capacity C(v) (bit/s) at a voxel; 0 if no visible BS."""
+        c = self.clf.C[tuple(cell)]
+        return 0.0 if not np.isfinite(c) else float(c)
+
+    def _raw_Lperf(self, cell):
+        """Localization performance 1/L = 1/sqrt(CRLB) (1/m) at a voxel.
+
+        GeoAgg's L_{i,t} is positioning performance (larger = better); our
+        physical analogue is the inverse localization error 1/L.  Voxels that
+        are not loc-capable (no finite L) score 0 performance.
+        """
+        L = self.clf.L[tuple(cell)]
+        if not np.isfinite(L) or L <= 0.0:
+            return 0.0
+        return float(1.0 / L)
 
     # ----------------------- feature builders -------------------------- #
     def _self_features(self, n):
         cell = self.pos[n]
         p = self.env.center_of(cell)
-        Fv = self.clf.F(cell)                               # F(v_n(t))
         gvec = self.goal_centers[n] - p
         gdist = np.linalg.norm(gvec)
         gunit = gvec / gdist if gdist > 1e-9 else np.zeros(3)
-        feat = np.concatenate([
-            p / self.area,                                  # normalized position
-            Fv,                                             # (f_comm, f_loc)
-            gunit,                                          # goal direction (added)
-            [gdist / np.linalg.norm(self.area)],            # normalized goal distance
-            [1.0 if self.arrived[n] else 0.0],
+        nav = [gunit[0], gunit[1], gunit[2],           # goal direction (shared)
+               gdist / np.linalg.norm(self.area),      # goal distance (shared)
+               1.0 if self.arrived[n] else 0.0]        # arrived flag
+        if self._is_geo():
+            # GeoAgg state: raw normalised (C, 1/L) at the current cell + the
+            # number of usable LoS links |D_hat| (>=4 needed for a TDOA fix),
+            # normalised by N_G.  NO CLF fingerprint, NO neighbour preview.
+            cn, ln = self._commloc_norm
+            n_los = float(self.clf.M_count[cell]) / max(len(self.env.bs), 1)
+            return np.concatenate([
+                p / self.area,                          # position q
+                [self._raw_C(cell) / cn,                # channel/capacity g_hat
+                 self._raw_Lperf(cell) / ln],           # loc performance 1/L
+                [n_los],                                # |D_hat| LoS link count
+                nav,
+            ])
+        # CLF: sigmoid fingerprint F = (f_comm, f_loc) at the current cell.
+        return np.concatenate([
+            p / self.area,                              # normalized position
+            self.clf.F(cell),                           # (f_comm, f_loc)
+            nav,
         ])
-        return feat
 
     def get_obs(self):
-        """Local observations o_n(t) for all agents (paper Sec. III)."""
+        """Local observations o_n(t) for all agents (paper Sec. III).
+
+        CLF (proposed): self features + a 27-neighbour adjacency scan of the CLF
+        fingerprint (its own look-ahead perception mechanism).
+        GeoAgg baseline: self features ONLY (the raw physical/geometric state at
+        the current cell); no neighbour preview -- feasibility is enforced via
+        action_masks() at selection time, not observed.
+        """
+        if self._is_geo():
+            return np.array([self._self_features(n) for n in range(self.U)])
         obs = []
         for n in range(self.U):
             cell = self.pos[n]
             self_feat = self._self_features(n)
-            # Adjacency CLF  F(N_n^adj(t)) + feasibility flag, per action.
+            # Adjacency CLF fingerprint F(N_n^adj) + feasibility flag, per action.
             adj = np.zeros((N_ACTIONS, 3))
             mask = self.env.feasible_action_mask(cell)
             for a in range(N_ACTIONS):
@@ -215,6 +288,43 @@ class MultiUAVEnv:
             return -self.cfg.shaping_coef
         return -self.cfg.shaping_coef * d / self.shaping_norm
 
+    def _geoagg_commloc_reward(self, n, new_cell):
+        """GeoAgg-HSAC potential-based stepwise-log comm/loc reward (Eq.18-20).
+
+        Used when cfg.reward_mode == "geoagg_log" -- the INDEPENDENT baseline's
+        OWN reward, computed on the RAW physical quantities (capacity C, loc
+        performance 1/L), NOT the CLF fingerprint.  This is what makes the SAC
+        baseline a genuine alternative to CLF-MAPPO rather than a re-solve of the
+        same CLF objective.
+
+          r^c = f(C_t) - f(C_{t-1}),   f(C) =  log10(C/gamma_r)      (C>=gamma_r)
+                                              -log10(gamma_r/C)       (C< gamma_r)
+          r^l = (1/L_t) - (1/L_{t-1})                                 (Eq.20)
+
+        Returns (commloc_reward, C_t, Lperf_t) so the caller can refresh the
+        per-UAV previous-step cache.  gamma_r = cfg.geoagg_gamma_r (median
+        capacity, matching the CLF calibration centre so neither method is
+        favoured).  The weights w_C / w_L are reused so the comm:loc balance is
+        identical to the CLF reward -- only the term DESIGN differs.
+        """
+        cfg = self.cfg
+        C_t = self._raw_C(new_cell)
+        Lperf_t = self._raw_Lperf(new_cell)
+        gr = cfg.geoagg_gamma_r
+
+        def f_log(C):
+            if C <= 0.0:
+                return -cfg.geoagg_log_floor      # no link: large negative score
+            r = C / gr
+            v = np.log10(r) if r >= 1.0 else -np.log10(1.0 / r)
+            return float(np.clip(v, -cfg.geoagg_log_floor, cfg.geoagg_log_floor))
+
+        rc = f_log(C_t) - f_log(self._prev_C[n])
+        # Localization performance difference, scaled to keep it O(1) like rc.
+        rl = (Lperf_t - self._prev_Lperf[n]) / cfg.geoagg_lperf_scale
+        commloc = (cfg.w_C * rc + cfg.w_L * rl) * cfg.geoagg_commloc_weight
+        return commloc, C_t, Lperf_t
+
     def _collision_indicator(self, new_pos):
         """I_coll(v_n(t)) for each UAV (paper Sec. III).
 
@@ -255,16 +365,28 @@ class MultiUAVEnv:
 
         # Per-UAV reward terms.
         rewards_n = np.zeros(self.U)
+        use_geoagg = getattr(cfg, "reward_mode", "clf") == "geoagg_log"
         for n in range(self.U):
             chi = 0.0 if self.arrived[n] else 1.0           # chi_n(t)
             Fv = self.clf.F(new_pos[n])
             f_comm, f_loc = Fv[0], Fv[1]
             E_tilde = energy[n] / self.E_max                # normalized energy
             delta_coll = cfg.lambda_coll * I_coll[n]        # collision penalty
-            # Paper reward r(t) (chi-gated, all terms <= 0).
+            # Communication-localization term.  Two designs, selected by
+            # cfg.reward_mode -- this is the ONLY part that differs between the
+            # proposed CLF planner and the independent GeoAgg-style baseline:
+            #   "clf"        : CLF fingerprint  w_C(f_comm-1)+w_L(f_loc-1)  (<=0)
+            #   "geoagg_log" : GeoAgg stepwise-log reward on RAW C and 1/L
+            #                  (Eq.18-20), the baseline's OWN reward -- NOT CLF.
+            if use_geoagg:
+                commloc, C_t, Lperf_t = self._geoagg_commloc_reward(n, new_pos[n])
+                self._prev_C[n] = C_t
+                self._prev_Lperf[n] = Lperf_t
+            else:
+                commloc = cfg.w_C * (f_comm - 1.0) + cfg.w_L * (f_loc - 1.0)
+            # Paper reward r(t): comm/loc term (design above) + energy + collision.
             r_paper = chi * (
-                cfg.w_C * (f_comm - 1.0)
-                + cfg.w_L * (f_loc - 1.0)
+                commloc
                 - cfg.w_E * E_tilde
                 - delta_coll
             )
@@ -308,6 +430,15 @@ class MultiUAVEnv:
         terminated = all(self.arrived)          # true task completion
         truncated = self.t >= cfg.max_steps     # horizon cutoff (not terminal)
         done = terminated or truncated
+        # Neutral physical metrics for training-curve logging (favours neither
+        # reward design): MEAN over UAVs at the current step.  collect_episode
+        # accumulates these across ALL steps of the episode so the training
+        # curve shows the per-round trajectory MEAN (not the fixed goal-voxel
+        # endpoint, which is pinned to a scene constant).
+        C_step = np.array([self._raw_C(p) for p in new_pos], dtype=float)
+        L_step = np.array([self.clf.L[p] for p in new_pos], dtype=float)
+        C_step = np.where(np.isfinite(C_step), C_step, 0.0)
+        L_step = L_step[np.isfinite(L_step) & (L_step > 0)]
         info = {
             "arrived": list(self.arrived),
             "f_comm": float(np.mean([self.clf.f_comm[p] for p in new_pos])),
@@ -316,5 +447,7 @@ class MultiUAVEnv:
             "collisions": float(np.sum(I_coll)),
             "terminated": terminated,
             "truncated": truncated,
+            "C_Mbps": float(np.mean(C_step) / 1e6) if C_step.size else 0.0,
+            "L_m": float(np.mean(L_step)) if L_step.size else np.nan,
         }
         return self.get_obs(), self.get_state(), r, done, info

@@ -48,7 +48,10 @@ class MAPPO:
                           cfg.lr_critic, seed=cfg.seed + 1)
         self.rng = np.random.default_rng(cfg.seed)
         self.history = {"reward": [], "f_comm": [], "f_loc": [],
-                        "arrived": [], "ep_len": [], "collisions": []}
+                        "arrived": [], "ep_len": [], "collisions": [],
+                        "C_Mbps": [], "L_m": [],
+                        "eval_ep": [], "eval_C_Mbps": [], "eval_L_m": [],
+                        "eval_arrived": []}
 
     # ------------------------------------------------------------------ #
     def policy(self, obs, masks):
@@ -66,6 +69,11 @@ class MAPPO:
         traj = {k: [] for k in
                 ["obs", "act", "mask", "logp", "state", "rew", "val", "done"]}
         info = {}
+        # Accumulate per-step physical metrics so the training curve reflects the
+        # MEAN over the WHOLE trajectory (every visited voxel), not just the last
+        # step's landing voxel (the fixed goal, which is a scene constant and
+        # would pin the curve regardless of path quality).
+        c_steps, l_steps = [], []
         for _ in range(self.cfg.max_steps):
             masks = self.env.action_masks()
             probs = self.policy(obs, masks)
@@ -76,6 +84,9 @@ class MAPPO:
             val = self.value(state)
 
             nobs, nstate, r, done, info = self.env.step(actions)
+            c_steps.append(info["C_Mbps"])
+            if np.isfinite(info["L_m"]):
+                l_steps.append(info["L_m"])
             traj["obs"].append(obs); traj["act"].append(actions)
             traj["mask"].append(masks); traj["logp"].append(logp)
             traj["state"].append(state); traj["rew"].append(r)
@@ -86,6 +97,10 @@ class MAPPO:
             obs, state = nobs, nstate
             if done:
                 break
+        # Overwrite the last-step C/L with the trajectory-wide MEAN so history
+        # logging (which reads info["C_Mbps"]/["L_m"]) plots the per-round mean.
+        info["C_Mbps"] = float(np.mean(c_steps)) if c_steps else 0.0
+        info["L_m"] = float(np.mean(l_steps)) if l_steps else np.nan
         # Bootstrap value for GAE: 0 on true termination (all arrived), else
         # V(s_T) -- used whenever the episode was truncated by the horizon.
         traj["last_val"] = 0.0 if info.get("terminated", False) \
@@ -221,12 +236,38 @@ class MAPPO:
             self.history["ep_len"].append(np.mean([len(t["rew"]) for t in batch]))
             self.history["collisions"].append(
                 np.mean([i["collisions"] for i in infos]))
+            self.history["C_Mbps"].append(
+                np.mean([i["C_Mbps"] for i in infos]))
+            self.history["L_m"].append(
+                np.nanmean([i["L_m"] for i in infos]))
             if verbose:
                 print(f"[ep {episode:4d}] R={self.history['reward'][-1]:7.3f} "
                       f"f_comm={self.history['f_comm'][-1]:.3f} "
                       f"f_loc={self.history['f_loc'][-1]:.3f} "
                       f"arrived={self.history['arrived'][-1]:.2f} "
                       f"len={self.history['ep_len'][-1]:.1f}")
+            # --- periodic greedy evaluation (policy quality, not exploration) --- #
+            eval_interval = getattr(cfg, "eval_interval", 40)
+            block_start = episode - cfg.rollouts_per_update
+            if (block_start // eval_interval) != (episode // eval_interval) \
+                    or episode >= cfg.epi_max:
+                # Run greedy rollout, compute physical C/L from trajectories.
+                trajs, info = self.greedy_rollout()
+                clf = self.env.clf
+                C_all, L_all = [], []
+                for tr in trajs:
+                    for c in tr:
+                        C_all.append(clf.C[tuple(c)])
+                        L_all.append(clf.L[tuple(c)])
+                C_arr = np.where(np.isfinite(C_all), np.array(C_all, float), 0.0)
+                L_arr = np.array([l for l in L_all if np.isfinite(l) and l > 0], float)
+                self.history["eval_ep"].append(episode)
+                self.history["eval_C_Mbps"].append(
+                    float(np.median(C_arr)) / 1e6 if C_arr.size else 0.0)
+                self.history["eval_L_m"].append(
+                    float(np.median(L_arr)) if L_arr.size else np.nan)
+                self.history["eval_arrived"].append(
+                    float(info["n_arrived"]) / self.env.U)
         return self.history
 
     # -------------------------- greedy rollout ------------------------- #
