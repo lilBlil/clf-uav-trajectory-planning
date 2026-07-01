@@ -38,6 +38,10 @@ outputs/
 *.bbl
 *.blg
 
+# ---- Reference PDFs and annotated drafts (copyright / large binaries) ----
+paper/refs/
+*批注*.pdf
+
 # ---- IDE / editor ----
 .vscode/
 .idea/
