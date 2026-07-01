@@ -20,7 +20,7 @@ import sys
 
 import numpy as np
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from src.config import Config
 from src.environment import UrbanEnvironment, MOORE, N_ACTIONS
@@ -48,7 +48,7 @@ def geodesic_greedy_paths(env, m):
 
 def main():
     cfg = Config()
-    outdir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "outputs")
+    outdir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "outputs")
     os.makedirs(outdir, exist_ok=True)
 
     print(">> Building environment + CLF map (no training) ...")

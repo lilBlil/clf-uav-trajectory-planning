@@ -20,7 +20,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-outdir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "outputs")
+outdir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "outputs")
 df = pd.read_csv(os.path.join(outdir, "resolution_comparison.csv"))
 res = sorted(df.voxel_size.unique(), reverse=True)      # 20, 15, 10
 x = np.array(res)

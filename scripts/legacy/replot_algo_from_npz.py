@@ -27,7 +27,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-OUTDIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "outputs")
+OUTDIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "outputs")
 ROLLOUTS_PER_UPDATE = 8                       # matches Config.rollouts_per_update
 ALGO_ORDER = ["MAPPO", "IPPO", "MAA2C"]
 ALGO_COLOR = {"MAPPO": "tab:green", "IPPO": "tab:blue", "MAA2C": "tab:orange"}

@@ -13,7 +13,7 @@ compare_resolutions.py, pareto_clf.py).  Re-run anytime to refresh.
 import os
 from PIL import Image
 
-OUTDIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "outputs")
+OUTDIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "outputs")
 
 
 def hstack(srcs, dst, pad=12, bg=(255, 255, 255)):

@@ -82,7 +82,7 @@ best_fc = np.array(best_fc); best_fl = np.array(best_fl)
 best_mean = (best_fc + best_fl) / 2
 x = np.array(RES)
 
-outdir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "outputs")
+outdir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "outputs")
 fig, axes = plt.subplots(1, 2, figsize=(13, 5.2))
 
 # --- left: CLF quality vs resolution (monotone up) ------------------------- #

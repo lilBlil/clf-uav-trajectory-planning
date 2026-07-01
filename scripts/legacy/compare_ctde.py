@@ -45,7 +45,7 @@ import argparse
 import numpy as np
 import pandas as pd
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))))
 
 from src.config import Config
 from src.environment import UrbanEnvironment
@@ -192,7 +192,7 @@ def main():
         for o in PER_ALGO.values():
             o["epi_max"] = 200
 
-    outdir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "outputs")
+    outdir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "outputs")
     os.makedirs(outdir, exist_ok=True)
 
     print(">> Building environment + CLF map (shared across all algorithms) ...")

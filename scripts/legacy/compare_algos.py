@@ -43,7 +43,7 @@ import argparse
 import numpy as np
 import pandas as pd
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))))
 
 from src.config import Config
 from src.environment import UrbanEnvironment
@@ -202,7 +202,7 @@ def main():
         cfg.use_shaping = True
         cfg.shaping_coef = args.shaping_coef
 
-    outdir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "outputs")
+    outdir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "outputs")
     os.makedirs(outdir, exist_ok=True)
 
     print(">> Building environment + CLF map (shared across all algorithms) ...")

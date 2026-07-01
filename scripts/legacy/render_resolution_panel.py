@@ -25,7 +25,7 @@ from src.config import Config
 from src.environment import UrbanEnvironment, MOORE, HOVER_ACTION, N_ACTIONS
 from src.clf import CLFMap
 
-OUTDIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "outputs")
+OUTDIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "outputs")
 RES = [20.0, 15.0, 10.0]
 WEIGHTS = [(20, 2), (10, 2), (6, 6), (2, 10), (2, 20)]
 

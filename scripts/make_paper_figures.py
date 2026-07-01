@@ -38,7 +38,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-OUTDIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "outputs")
+OUTDIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "outputs")
 ROLLOUTS_PER_UPDATE = 8          # episodes per update (matches Config)
 N_UPDATES = 250                  # = 2000 episodes / 8, matches the real runs
 N_SEEDS = 5                      # band = mean +/- std over this many synthetic seeds

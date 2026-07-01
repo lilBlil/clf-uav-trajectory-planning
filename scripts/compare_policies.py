@@ -26,7 +26,7 @@ import copy
 
 import numpy as np
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from src.config import Config
 from src.environment import UrbanEnvironment, MOORE, N_ACTIONS
@@ -106,7 +106,7 @@ def main():
     cfg.shaping_coef = 70.0
     cfg.epi_max = 1600
     np.random.seed(cfg.seed)
-    outdir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "outputs")
+    outdir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "outputs")
     os.makedirs(outdir, exist_ok=True)
 
     print(">> Building environment + CLF map ...")
