@@ -1,0 +1,415 @@
+\documentclass[lettersize,journal]{IEEEtran}
+
+\usepackage{amsmath,amsfonts,amssymb}
+\usepackage{algorithmic}
+\usepackage{algorithm}
+\usepackage{array}
+\usepackage{textcomp}
+\usepackage{stfloats}
+\usepackage{url}
+\usepackage{cite}
+\usepackage{graphicx}
+\graphicspath{{../outputs/}{outputs/}{../}{./}}
+\usepackage{subcaption}
+
+\renewcommand{\algorithmicrequire}{\textbf{Input:}}
+\renewcommand{\algorithmicensure}{\textbf{Output:}}
+
+\hyphenation{op-tical net-works semi-conduc-tor IEEE-Xplore}
+
+\begin{document}
+
+\title{Communication--Localization Fingerprint-Aided Multi-UAV Trajectory Planning in Urban Environments}
+
+\author{Zelong Wu}
+
+\maketitle
+
+\begin{abstract}
+Building-induced blockages in urban low-altitude environments lead to abrupt spatial variations in communication and localization service quality between uncrewed aerial vehicles (UAVs) and ground base stations. Even with integrated localization and communication (ILAC), UAV trajectories may still traverse communication outage and localization lock-loss regions. To address this challenge, this letter proposes a communication--localization fingerprint (CLF)-aided cooperative trajectory planning framework for multi-UAV systems. An offline CLF map is first constructed to provide a unified spatial representation of communication and localization quality. The resulting planning problem is then formulated as a decentralized partially observable Markov decision process (Dec-POMDP) and solved under a centralized-training decentralized-execution (CTDE) multi-agent reinforcement learning framework. Simulation results demonstrate that the proposed method enables UAVs to avoid service-degradation regions, thereby improving communication--localization continuity and trajectory reliability.
+\end{abstract}
+
+\begin{IEEEkeywords}
+Multi-UAV, communication--localization fingerprint, urban low-altitude environment, trajectory planning, integrated localization and communication, multi-agent reinforcement learning.
+\end{IEEEkeywords}
+
+\section{Introduction}
+
+Integrated localization and communication (ILAC) is emerging as an important paradigm for sixth-generation (6G) wireless systems, supporting communication and positioning through shared infrastructure and radio resources~\cite{ref1}. Owing to their high mobility, flexible deployment, and favorable line-of-sight (LoS) conditions~\cite{ref2,ref3,ref4,ref5,ref6}, uncrewed aerial vehicles (UAVs) have been widely investigated as aerial platforms for urban low-altitude ILAC services. In dense urban environments, however, buildings frequently obstruct air--ground links and cause abrupt spatial variations in service quality, so that a geometrically feasible UAV trajectory may still traverse communication-outage or localization-lock-loss regions, making reliable multi-UAV trajectory planning challenging.
+
+Existing studies address UAV deployment and trajectory design from optimization- and learning-based perspectives. Optimization and heuristic methods have been applied to UAV relay placement, 3-D position optimization~\cite{ref7}, and joint deployment with communication--localization task allocation~\cite{ref8}, but obstacle-rich environments induce nonconvex service regions and high online computational cost~\cite{ref9}. Reinforcement learning (RL) has therefore been introduced for UAV trajectory and resource optimization~\cite{ref10}, including hierarchical multi-agent RL~\cite{ref9}, occlusion-aware trajectory optimization~\cite{ref11}, and joint trajectory and beamforming design~\cite{ref12}. Most such policies, however, rely on instantaneous or local observations, so UAVs tend to react only after entering service-degraded regions rather than avoiding them in advance.
+
+Sustaining both services is more demanding than communication-oriented planning, as they impose different spatial requirements: a communication link can be maintained through one reliable LoS base station (BS), whereas 3-D TDOA localization requires multiple geometrically distributed BSs and is sensitive to the Cram\'er--Rao lower bound (CRLB). Communication- and localization-favorable regions thus need not coincide, and coupling with target reaching, collision avoidance, and flight energy in multi-UAV missions makes future service reliability hard to infer from local observations alone. This motivates pre-built spatial representations, such as radio or channel maps~\cite{ref13,ref14,ref15}, that provide look-ahead environmental information for trajectory decisions.
+
+Motivated by the above, this letter proposes a communication--localization fingerprint (CLF)-aided cooperative trajectory planning method for urban multi-UAV ILAC systems. An offline CLF map is first constructed from Shannon capacity and the TDOA-CRLB to jointly characterize communication and localization quality over the discretized 3-D airspace, from which each UAV observes its own fingerprint and those of neighboring feasible voxels for service-aware decision making. The constrained multi-UAV planning problem is then formulated as a decentralized partially observable Markov decision process and solved by a centralized-training decentralized-execution multi-agent RL strategy. Simulation results show that the proposed method improves communication--localization continuity and trajectory reliability over CLF-blind baselines.
+
+\section{System Model and Problem Formulation} 
+
+\subsection{Urban Environment Model}
+
+We consider an urban low-altitude environment consisting of buildings, ground BSs, and multiple UAVs. The building set is denoted by $\mathbf{B}=\{b_1,b_2,\ldots,b_{|\mathbf{B}|}\}$, where each building $b_j$ is modeled as an axis-aligned cuboid with center $\mathbf{c}_j^b=(x_j^b,y_j^b,z_j^b)$ and dimensions $(l_j,w_j,h_j)$. The BS set is denoted by $\mathbf{M}=\{m_1,m_2,\ldots,m_{|\mathbf{M}|}\}$, where BS $m_k$ has position $\mathbf{p}_k^m=(x_k^m,y_k^m,z_k^m)$, transmit power $P_k$, and carrier frequency $f_c$.
+
+For trajectory planning and environmental modeling, the 3-D airspace is discretized into a voxel set $\mathbf{V}=\{v_1,v_2,\ldots,v_{|\mathbf{V}|}\}$. Voxel $v_i$ has center $\mathbf{c}_i^v=(x_i^v,y_i^v,z_i^v)$, edge length $\Delta r$, and occupied region $\Omega(v_i)$. The occupied region of building $b_j$ is denoted by $\Omega(b_j)$. The building-occupancy indicator of voxel $v_i$ is defined as
+\begin{equation}
+I_{\mathrm{occ}}(v_i)=
+\begin{cases}
+1, & \exists b_j\in\mathbf{B},\ \Omega(v_i)\cap\Omega(b_j)\neq\varnothing,\\
+0, & \mathrm{otherwise}.
+\end{cases}
+\end{equation}
+
+Considering obstacle avoidance, safety-distance requirements, and low-altitude flight constraints, the feasible voxel set is given by
+\begin{equation}
+\begin{aligned}
+\mathbf{V}_{\mathrm{feas}}=&\{v_i\in\mathbf{V}\mid I_{\mathrm{occ}}(v_i)=0,\\
+&\min_{b_j\in\mathbf{B}}d(\Omega(v_i),\Omega(b_j))\ge d_{\min}^{\mathrm{safety}},\\
+& h_{\min}\le z_i^v\le h_{\max}\},
+\end{aligned}
+\end{equation}
+where $d(\Omega(v_i),\Omega(b_j))$ denotes the minimum distance between voxel $v_i$ and building $b_j$, $d_{\min}^{\mathrm{safety}}$ is the safety-distance threshold, and $h_{\min}$ and $h_{\max}$ are the minimum and maximum UAV flight altitudes, respectively.
+
+The UAV set is denoted by $\mathbf{U}=\{u_1,u_2,\ldots,u_{|\mathbf{U}|}\}$. The start and target voxels of UAV $u_n$ are $v_n^{\mathrm{start}}$ and $v_n^{\mathrm{end}}$, respectively. At discrete time slot $t\in\{0,1,\ldots,T\}$, the position of UAV $u_n$ is represented by its hosted voxel $v_n(t)\in\mathbf{V}_{\mathrm{feas}}$, and its trajectory is
+\begin{equation}
+\mathrm{Traj}_n=\{v_n(0),v_n(1),\ldots,v_n(T)\},
+\end{equation}
+where $v_n(0)=v_n^{\mathrm{start}}$, and the UAV is expected to reach $v_n^{\mathrm{end}}$ within the finite planning horizon. Fig.~\ref{fig:urban_clf_framework} illustrates the overall CLF-aided planning framework.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=0.9\columnwidth]{outputs/image.png}
+\caption{Urban CLF-aided multi-UAV trajectory planning framework.}
+\label{fig:urban_clf_framework}
+\end{figure}
+
+\subsection{Communication--Localization Fingerprint}
+
+To jointly characterize spatial communication and localization performance, we define the communication--localization fingerprint (CLF) of each feasible voxel $v_i\in\mathbf{V}_{\mathrm{feas}}$ as
+\begin{equation}
+F(v_i)=\{f_{\mathrm{comm}}(v_i),f_{\mathrm{loc}}(v_i)\},
+\end{equation}
+where $f_{\mathrm{comm}}(v_i)$ and $f_{\mathrm{loc}}(v_i)$ denote the communication and localization fingerprints, respectively.
+
+A LoS link between $v_i$ and BS $m_k$ is available if the corresponding propagation segment is free of blockage and lies within the maximum communication range. Let $\mathbf{M}_i$ denote the set of LoS-accessible BSs for voxel $v_i$.
+
+\noindent\textbf{1. Communication performance.}
+For the link between $v_i$ and $m_k$, the signal-to-noise ratio is
+\begin{equation}
+\mathrm{SNR}_{i,k}=\frac{P_kG_{i,k}}{\sigma_0^2},
+\end{equation}
+where $\sigma_0^2$ is the noise power, $G_{i,k}=\beta_0\,d_{i,k}^{-\alpha}$ is the channel gain, $d_{i,k}=d(\mathbf{c}_i^v,\mathbf{p}_k^m)$ is the link distance, $\beta_0$ is the reference gain, and $\alpha$ is the path-loss exponent. The achievable capacity is $R_{i,k}=B\log_2(1+\mathrm{SNR}_{i,k})$, where $B$ is the system bandwidth. The communication performance of $v_i$ is then expressed as
+\begin{equation}
+C(v_i)=\max_{m_k\in\mathbf{M}_i}R_{i,k}.
+\end{equation}
+
+\noindent\textbf{2. TDOA localization performance.}
+For positioning reference signal (PRS)-based TDOA ranging, the TOA estimation error variance is $\sigma_{i,k}^2=c^2T_{\mathrm{sym}}^2/(8\pi^2\,\mathrm{SNR}_{i,k}\sum_{j=1}^{N_J}p_j^2j^2)$, where $c$ is the speed of light, $T_{\mathrm{sym}}$ is the symbol duration, and $p_j$ is the power weight of the $j$-th subcarrier. Taking BS $m_1$ as the reference anchor, the CRLB for 3-D TDOA localization is~\cite{ref16}
+\begin{equation}
+\mathrm{CRLB}(v_i)=\mathrm{tr}\big((\mathbf{D}_i^{\mathrm{T}}\mathbf{R}_i^{-1}\mathbf{D}_i)^{-1}\big),
+\end{equation}
+where $\mathbf{D}_i$ is the Jacobian matrix whose $(k-1)$-th row is $[(\mathbf{c}_i^v-\mathbf{p}_1^m)/d_{i,1}-(\mathbf{c}_i^v-\mathbf{p}_k^m)/d_{i,k}]^{\mathrm{T}}$ for $k=2,\ldots,|\mathbf{M}_i|$, and $\mathbf{R}_i$ is the covariance matrix with $[\mathbf{R}_i]_{k,k'}=\sigma_{i,1}^2+\sigma_{i,k+1}^2\delta_{k,k'}$, where $\delta_{k,k'}$ is the Kronecker delta. The localization error metric is defined as $L(v_i)=\sqrt{\mathrm{CRLB}(v_i)}$.
+
+\noindent\textbf{3. Normalized fingerprints.}
+To place the two heterogeneous service metrics on a common scale, we construct normalized fingerprints through sigmoid mapping. Let $S(x)=1/(1+e^{-x})$ and define
+\begin{equation}
+\Phi(x;\tau,\alpha)=\frac{S(\alpha(x-\tau))-S(-\alpha\tau)}{1-S(-\alpha\tau)}.
+\end{equation}
+The communication and localization fingerprints are then given by
+\begin{equation}
+f_{\mathrm{comm}}(v_i)=
+\begin{cases}
+\Phi(C(v_i);C_{\mathrm{th}}-\delta_C,\alpha_C), & |\mathbf{M}_i|\ge 1,\\
+0, & \mathrm{otherwise},
+\end{cases}
+\end{equation}
+\begin{equation}
+f_{\mathrm{loc}}(v_i)=
+\begin{cases}
+\Phi(1/L(v_i);1/(L_{\mathrm{th}}+\delta_L),\alpha_L), & |\mathbf{M}_i|\ge 4,\\
+0, & \mathrm{otherwise},
+\end{cases}
+\end{equation}
+where $C_{\mathrm{th}}$ and $L_{\mathrm{th}}$ are the communication and localization thresholds, and $\delta_C,\alpha_C,\delta_L,\alpha_L$ are the corresponding offset and slope parameters. When $|\mathbf{M}_i|<4$, 3-D TDOA localization is infeasible, and thus $f_{\mathrm{loc}}(v_i)=0$.
+
+\subsection{UAV Mobility Model}
+
+In the discretized airspace, each UAV can only select its next position from the adjacent feasible voxel set $\mathbf{V}_n^{\mathrm{adj}}(t)$ associated with its current voxel $v_n(t)$. Accordingly, each trajectory is represented as a sequence of discrete voxel centers. To satisfy flight-speed constraints, the action set is restricted to the 26-neighborhood and hovering. For a cubic voxel with edge length $\Delta r$, the single-step displacement belongs to $\{0,\Delta r,\sqrt{2}\Delta r,\sqrt{3}\Delta r\}$, corresponding to hovering, face-adjacent movement, edge-adjacent movement, and corner-adjacent movement, respectively. The equivalent flight speed $V_n(t)$ is therefore quantized into the finite set $\{0,\Delta r/\Delta t,\sqrt{2}\Delta r/\Delta t,\sqrt{3}\Delta r/\Delta t\}$.
+
+For energy consumption, the propulsion power $P(V_n(t))$ follows the rotary-wing UAV power model in~\cite{ref17}. The single-step flight energy is $E_n^{\mathrm{fly}}(t)=P(V_n(t))\cdot\Delta t$. Since $V_n(t)$ only takes finitely many values, the single-step energy of each movement action can be precomputed offline.
+
+\subsection{Multi-UAV Planning Problem}
+
+The multi-UAV cooperative trajectory planning problem aims to determine, for each UAV and each time slot, a feasible next voxel that jointly improves communication performance, localization performance, and energy efficiency during trajectory execution while satisfying safety and terminal constraints. The optimization problem is formulated as
+\begin{equation}
+\small
+\begin{aligned}
+\max_{\{v_n(t)\}}\quad
+& \sum_{n=1}^{|\mathbf{U}|}\sum_{t=1}^{T}
+\Big[
+w_C f_{\mathrm{comm}}(v_n(t))
++ w_L f_{\mathrm{loc}}(v_n(t))
+- w_E E_n^{\mathrm{fly}}(t)
+\Big] \\
+\mathrm{s.t.}\
+& v_n(t)\in
+\mathbf{V}_{\mathrm{feas}}\cap
+\mathbf{V}_n^{\mathrm{adj}}(t-1),
+\quad \forall n,t,\\
+& v_n(t)\neq v_{n'}(t),
+\quad \forall n\neq n',t,\\
+& \{v_n(t{-}1),v_n(t)\}\neq\{v_{n'}(t),v_{n'}(t{-}1)\},\ \forall n\neq n',t,\\
+& v_n(0)=v_n^{\mathrm{start}},\quad
+\exists\,t_n\le T:\ v_n(t_n)=v_n^{\mathrm{end}},\ \forall n,\\
+& v_n(t)=v_n^{\mathrm{end}},\quad \forall t\ge t_n .
+\end{aligned}
+\end{equation}
+Here, $w_E$, $w_C$, and $w_L$ denote the energy penalty, communication demand, and localization demand factors, respectively, with $w_C+w_L=1$, and $E_n^{\mathrm{fly}}(t)$ is the single-step flight energy. The constraints respectively require each UAV to move to a feasible voxel adjacent to its previous position, prevent two UAVs from occupying the same voxel, avoid edge-swap collisions between adjacent time slots, and ensure that each UAV reaches its target at some $t_n\le T$ and remains there thereafter.
+
+Although the CLF map is constructed offline, each UAV only has access to local information during execution. The problem is therefore a partially observable multi-agent sequential decision-making problem. In the next section, we model it as a Dec-POMDP and solve it using a CTDE-based MARL framework.
+
+\section{Proposed Algorithm}
+
+Under the CTDE framework, MARL is used to solve the optimization problem formulated in Section~II. This letter adopts multi-agent proximal policy optimization (MAPPO) as the Dec-POMDP solver. The overall CTDE-based MARL architecture is shown in Fig.~\ref{fig:ctde_marl_framework}.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\columnwidth]{outputs/image2.png}
+\caption{CTDE-based MARL framework for CLF-aided multi-UAV trajectory planning.}
+\label{fig:ctde_marl_framework}
+\end{figure}
+
+The main components are described as follows.
+
+\noindent\textbf{1. State space.}
+At time slot $t$, the global system state consists of the voxel positions of all UAVs and their corresponding CLF values, defined as
+\begin{equation}
+s(t)=\{v_n(t),F(v_n(t))\}_{n=1,\cdots,|\mathbf{U}|}.
+\end{equation}
+During decentralized execution, the local observation of UAV $u_n$ is defined as
+\begin{equation}
+o_n(t)=\{v_n(t),F(v_n(t)),\mathbf{V}_n^{\mathrm{adj}}(t),F(\mathbf{V}_n^{\mathrm{adj}}(t))\},
+\end{equation}
+where $\mathbf{V}_n^{\mathrm{adj}}(t)$ and $F(\mathbf{V}_n^{\mathrm{adj}}(t))$ denote the adjacent feasible voxels of $v_n(t)$ and their fingerprint information, respectively.
+
+\noindent\textbf{2. Action space.}
+Each UAV moves in the discrete grid space, and its action is defined as
+\begin{equation}
+a_n(t)\in\mathcal{A}_n=\{\mathbf{V}_n^{\mathrm{adj}}(t)\}.
+\end{equation}
+The action selects the next voxel from the feasible adjacent voxel set of the current voxel, i.e., $v_n(t)\xrightarrow{a_n(t)}v_n(t+1)$.
+
+\noindent\textbf{3. Reward design.}
+A team-averaged immediate reward is constructed from voxel fingerprint information. Since the communication and localization fingerprints are already normalized, they are directly used in the reward, while the energy term is separately normalized. The immediate reward is defined as
+\begin{equation}
+\begin{aligned}
+r(t)=&\frac{1}{|\mathbf{U}|}\sum_{n}\Big\{X_n(t)\Big[
+ w_C(f_{\mathrm{comm}}(v_n(t))-1)\\
+&+w_L(f_{\mathrm{loc}}(v_n(t))-1)-w_E\widetilde{E}_n(t)-\delta_n^{\mathrm{coll}}(t)\Big]\\
+&+r_{\mathrm{arr}}\big[X_n(t-1)-X_n(t)\big]\Big\}.
+\end{aligned}
+\end{equation}
+The first two lines define the per-step service--energy--safety cost, which is gated by the arrival indicator $X_n(t)$ so that a UAV stops accumulating cost once it reaches its target. The last term is a one-time arrival bonus $r_{\mathrm{arr}}>0$ assigned when $X_n$ switches from $1$ to $0$, namely, when UAV $u_n$ first reaches $v_n^{\mathrm{end}}$. This design makes goal completion the desired terminal behavior under otherwise non-positive per-step rewards.
+Here, $X_n(t)$ is the arrival-status indicator defined as
+\begin{equation}
+X_n(t)=
+\begin{cases}
+1, & v_n(t)\neq v_n^{\mathrm{end}};\\
+0, & \mathrm{otherwise},
+\end{cases}
+\end{equation}
+which indicates whether UAV $u_n$ remains in an unfinished mission state. When $X_n(t)=0$, the UAV is considered to have reached its target voxel; its action is fixed to hovering, and it no longer accumulates communication fingerprint, localization fingerprint, or flight-energy cost.
+
+The normalized energy penalty is defined as 
+$\tilde{E}_n(t)=E_n(t)/E_{\max}$, where $E_n(t)$ is the single-step flight energy and 
+$E_{\max}$ is the maximum single-step energy, corresponding to corner-adjacent movement.
+
+The term $\delta_n^{\mathrm{coll}}(t)$ penalizes unsafe multi-UAV interactions and is defined as
+\begin{equation}
+\delta_n^{\mathrm{coll}}(t)=\lambda_{\mathrm{coll}}I_{\mathrm{coll}}(v_n(t)),
+\end{equation}
+where $\lambda_{\mathrm{coll}}$ is the collision penalty coefficient and $I_{\mathrm{coll}}(v_n(t))$ is the collision indicator function given by
+\begin{equation}
+I_{\mathrm{coll}}(v_n(t))=
+\begin{cases}
+1, &\begin{aligned}[t]
+&\exists n'\neq n,\ \text{s.t. }v_n(t)=v_{n'}(t)\ \text{or}\\
+&v_n(t)=v_{n'}(t-1)\ \text{and}\ v_n(t-1)=v_{n'}(t);
+\end{aligned}\\
+0, & \mathrm{otherwise}.
+\end{cases}
+\end{equation}
+The collision indicator captures both co-voxel occupancy and edge-swap crossing between adjacent time slots.
+
+In summary, the reward function leverages the normalized voxel fingerprints to evaluate communication and localization performance under a unified metric, while flight energy and safety are incorporated through the normalized energy term and the per-UAV collision penalty.
+
+Based on the above state, action, and reward designs, the MAPPO algorithm proceeds as follows.
+
+\begin{algorithm}[!t]
+\caption{CLF-Aided Multi-UAV Trajectory Planning via MAPPO}
+\label{alg:clf_mappo}
+\scriptsize
+\begin{algorithmic}
+\REQUIRE CLF map $F(v_i)$, feasible voxel set $\mathbf{V}_{\mathrm{feas}}$,
+start/goal voxels $v_n^{\mathrm{start}}$, $v_n^{\mathrm{end}}$,
+and MAPPO hyperparameters.
+
+\ENSURE Shared policy network $\pi_{\theta}$.
+
+\STATE Initialize shared actor $\theta$ and centralized critic $\phi$.
+
+\REPEAT
+    \STATE Reset UAV positions $v_n(0)\leftarrow v_n^{\mathrm{start}}$ and clear buffer $\mathcal{D}$.
+
+    \FOR{$t=0,\ldots,T-1$}
+        \STATE Each UAV constructs $o_n(t)$ from local CLF observations and samples a feasible action
+        $a_n(t)\sim\pi_{\theta}(\cdot\mid o_n(t))$.
+        \STATE Execute the joint action, obtain team reward $r(t)$, observe $s(t+1)$, and store the transition in $\mathcal{D}$.
+        \IF{all UAVs reach their target voxels}
+            \STATE \textbf{break}
+        \ENDIF
+    \ENDFOR
+
+    \STATE Compute GAE advantages $\hat{A}(t)$ and returns $\hat{R}(t)$.
+    \STATE Update actor $\theta$ using the PPO clipped objective and update critic $\phi$ using the value loss.
+
+\UNTIL{episode $=Epi_{\max}$}
+\end{algorithmic}
+\end{algorithm}
+
+\section{Experimental Evaluation}
+
+Simulations are conducted in the urban low-altitude scenario described in Section~II, where buildings, ground BSs, and UAVs are modeled in a voxelized airspace and UAV movements are restricted to feasible voxels. The communication and localization thresholds $C_{\mathrm{th}}$ and $L_{\mathrm{th}}$ are automatically calibrated from the medians of $C(v_i)$ and $1/L(v_i)$ over all feasible voxels, so that the sigmoid transition regions approximately cover $30\%$--$70\%$ of the feasible space. The navigation horizon and shaping coefficients are scaled with $1/\Delta r$ to maintain a consistent physical travel budget across different voxel resolutions. Key simulation parameters are summarized in Table~\ref{tab:params}.
+
+\begin{table}[t]
+\centering
+\caption{Key Simulation Parameters}
+\label{tab:params}
+\scriptsize
+\begin{tabular}{l|l}
+\hline
+\textbf{Parameter} & \textbf{Value} \\
+\hline
+Environment size & $600\times600\times150\,\mathrm{m}^3$ \\
+Number of buildings & 15 \\
+Number of BSs & 12 \\
+Number of UAVs & 3 \\
+Altitude range & $h_{\min}=60\,\mathrm{m}$, $h_{\max}=120\,\mathrm{m}$ \\
+Safety distance & $d_{\min}^{\mathrm{safety}}=5\,\mathrm{m}$ \\
+Voxel size & $\Delta r=20\,\mathrm{m}$ \\
+System bandwidth & $B=10\,\mathrm{MHz}$ \\
+Carrier frequency & $f_c=2.4\,\mathrm{GHz}$ \\
+BS transmit power & $P_k=30\,\mathrm{dBm}$ \\
+Path-loss exponent & $\alpha=2.4$ \\
+Noise power & $\sigma_0^2=-80\,\mathrm{dBm}$ \\
+Service weights & $w_C=0.5$, $w_L=0.5$ \\
+Discount factor & $\gamma=0.99$ \\
+GAE parameter & $\lambda=0.95$ \\
+PPO clip range & $\epsilon=0.2$ \\
+Actor learning rate & $3\times10^{-3}$ \\
+Critic learning rate & $5\times10^{-3}$ \\
+Hidden layer width & 128 \\
+Training episodes & 4000 \\ 
+\hline
+\end{tabular}
+\end{table}
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\columnwidth]{outputs/method_comparison.png}
+\caption{Three-way method comparison. Left: top-down trajectories over the $f_{\mathrm{loc}}$ field. Top-right: capacity $C$ (solid) and localization error $L$ (dotted) along the path. Bottom-right: mean $C$ and $L$ comparison. Line styles distinguish methods, while colors identify UAVs.}
+\label{fig:method_comparison}
+\end{figure}
+
+Fig.~\ref{fig:method_comparison} compares the proposed CLF method with two baselines using neutral physical metrics, namely Shannon capacity $C$ (Mbit/s) and localization error $L=\sqrt{\mathrm{CRLB}}$ (m). The geodesic greedy baseline is CLF-blind and follows geometry-only shortest paths. The GeoAgg baseline, adapted from~\cite{ref11}, employs a log-potential reward that directly optimizes raw physical quantities. All three methods achieve full arrival without collisions. The proposed CLF method attains the best localization performance while remaining comparable to the baselines in capacity, since a single LoS link already saturates $C$. The geodesic baseline moves directly through the dead-zone and therefore suffers severe localization degradation along the path. Without fingerprint-based look-ahead information, GeoAgg also fails to anticipate and bypass these degradation regions. In contrast, the thresholded and saturating CLF reward balances the two service dimensions, while the voxel-fingerprint representation guides UAVs around the dead-zone.
+
+\begin{figure}[t]
+\centering
+\begin{subfigure}[t]{0.48\columnwidth}
+\centering
+\includegraphics[width=\textwidth]{outputs/algo_return_only.png}
+\caption{}
+\end{subfigure}
+\hfill
+\begin{subfigure}[t]{0.48\columnwidth}
+\centering
+\includegraphics[width=\textwidth]{outputs/resolution_return_only.png}
+\caption{}
+\end{subfigure}
+\caption{Training dynamics: (a) algorithmic comparison among MAPPO, MAA2C, and IPPO; (b) voxel resolution sweep with $\Delta r=20/15/10\,\mathrm{m}$. Shading denotes $\pm 1$ standard deviation over random seeds.}
+\label{fig:training}
+\end{figure}
+
+Fig.~\ref{fig:training}(a) isolates the impact of the MARL algorithm. MAPPO achieves the highest team return with the smallest inter-seed variance. IPPO, which removes the centralized critic, performs substantially worse, indicating that centralized training is important under partial observability and multi-UAV coupling. MAA2C reaches a competitive average return but exhibits larger variance, suggesting that PPO clipping mainly improves training stability. Fig.~\ref{fig:training}(b) further examines the effect of voxel resolution. The coarse grid with $\Delta r=20\,\mathrm{m}$ converges fastest because its compact state--action space reduces sample complexity, whereas finer grids require more exploration and converge more slowly. Therefore, voxel resolution introduces a tradeoff between spatial fidelity and learning complexity: coarse grids are suitable for limited training budgets or smoothly varying fields, whereas finer grids are preferable when higher spatial precision is required.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=0.6\columnwidth]{outputs/pareto_clf.png}
+\caption{Communication--localization tradeoff frontier obtained by sweeping $w_L$ under $w_C+w_L=1$. Marker color encodes $w_L$, and the line traces the monotone frontier.}
+\label{fig:pareto}
+\end{figure}
+
+Fig.~\ref{fig:pareto} shows that the CLF framework allows the operator to adjust the communication--localization tradeoff through a single weight. By sweeping $w_L\in\{0,0.25,0.5,0.75,1.0\}$ under $w_C+w_L=1$, with one newly trained MAPPO policy for each operating point, the service balance can be shifted according to task demand. The obtained frontier is monotone: increasing $w_L$ from 0 to 1 improves $f_{\mathrm{loc}}$ from 0.37 to 0.64, while $f_{\mathrm{comm}}$ decreases from 0.69 to 0.54. All UAVs reach their targets at every operating point, indicating that this tunability does not compromise task completion.
+
+\section{Conclusion}
+
+This letter proposed a CLF-aided multi-UAV cooperative trajectory planning method for urban low-altitude environments. By integrating an offline CLF map with CTDE-based MARL, the proposed method enables cooperative planning under communication, localization, energy, and collision-avoidance constraints. Simulation results show that, compared with CLF-blind baselines, the proposed CLF-aware MAPPO mainly improves localization reliability at comparable communication quality, while ensuring that all UAVs reach their targets. The Pareto-frontier analysis further demonstrates a tunable communication--localization tradeoff, allowing an operator to adjust the service balance according to task demand without sacrificing mission completion. These results verify that CLF-based look-ahead information can effectively guide UAVs away from service-degradation regions and improve trajectory reliability and service continuity in urban blockage environments.
+
+\begin{thebibliography}{17}
+\footnotesize
+\setlength{\itemsep}{0pt}
+\setlength{\parskip}{0pt}
+\setlength{\parsep}{0pt}
+
+\bibitem{ref1}
+F. Liu, Y. Cui, C. Masouros, J. Xu, T. X. Han, Y. C. Eldar, and S. Buzzi, ``Integrated sensing and communications: Toward dual-functional wireless networks for 6G and beyond,'' \emph{IEEE J. Sel. Areas Commun.}, vol. 40, no. 6, pp. 1728--1767, Jun. 2022.
+
+\bibitem{ref2}
+Z. Wei, M. Zhu, N. Zhang, L. Wang, Y. Zou, Z. Meng, H. Wu, and Z. Feng, ``UAV-assisted data collection for Internet of Things: A survey,'' \emph{IEEE Internet Things J.}, vol. 9, no. 17, pp. 15460--15483, Sep. 2022.
+
+\bibitem{ref3}
+L. Gupta, R. Jain, and G. Vaszkun, ``Survey of important issues in UAV communication networks,'' \emph{IEEE Commun. Surveys Tuts.}, vol. 18, no. 2, pp. 1123--1152, Second Quart. 2016.
+
+\bibitem{ref4}
+S. Hayat, E. Yanmaz, and R. Muzaffar, ``Survey on unmanned aerial vehicle networks for civil applications: A communications viewpoint,'' \emph{IEEE Commun. Surveys Tuts.}, vol. 18, no. 4, pp. 2624--2661, Fourth Quart. 2016.
+
+\bibitem{ref5}
+Z. Xiao, L. Zhu, Y. Liu, P. Yi, R. Zhang, X.-G. Xia, and R. Schober, ``A survey on millimeter-wave beamforming enabled UAV communications and networking,'' \emph{IEEE Commun. Surveys Tuts.}, vol. 24, no. 1, pp. 557--610, First Quart. 2022.
+
+\bibitem{ref6}
+Y. Zeng, R. Zhang, and T. J. Lim, ``Wireless communications with unmanned aerial vehicles: Opportunities and challenges,'' \emph{IEEE Commun. Mag.}, vol. 54, no. 5, pp. 36--42, May 2016.
+
+\bibitem{ref7}
+J. Chen, U. Mitra, and D. Gesbert, ``3D urban UAV relay placement: Linear complexity algorithm and analysis,'' \emph{IEEE Trans. Wireless Commun.}, vol. 20, no. 8, pp. 5243--5257, Aug. 2021.
+
+\bibitem{ref8}
+X. Yu, Y. Zheng, M. Sheng, Y. Shi, and J. Li, ``Optimizing UAV deployment and access control for integrated localization and communication,'' in \emph{Proc. IEEE Int. Conf. Commun. (ICC)}, 2025, pp. 6615--6620.
+
+\bibitem{ref9}
+Z. Wang, J. Zhao, F. He, W. Jia, W. Jin, and Q. Wu, ``A hierarchical MADRL framework for joint resource allocation and trajectory design in UAV enabled multi-static ISAC networks,'' \emph{IEEE Wireless Commun. Lett.}, vol. 15, pp. 1325--1329, Jan. 2026.
+
+\bibitem{ref10}
+X. Xu, H. Xu, D. Wei, W. Saad, M. Bennis, and M. Chen, ``Transformer-based collaborative reinforcement learning for fluid antenna system (FAS)-enabled 3D UAV positioning,'' \emph{IEEE J. Sel. Areas Commun.}, vol. 44, pp. 1128--1143, 2026.
+
+\bibitem{ref11}
+Y. Xie, L. Wang, Z. Chang, L. Xu, S. Bi, and Z. Han, ``GeoAgg-HSAC: An RL-based framework for trajectory and resource optimization in mountainous UAV integrated localization and communication networks,'' \emph{IEEE Trans. Wireless Commun.}, vol. 25, pp. 6507--6520, 2026.
+
+\bibitem{ref12}
+Q. Gao, R. Zhong, H. Shin, and Y. Liu, ``MARL-based UAV trajectory and beamforming optimization for ISAC system,'' \emph{IEEE Internet Things J.}, vol. 11, no. 24, pp. 40492--40504, Dec. 2024.
+
+\bibitem{ref13}
+D. Gesbert, O. Esrafilian, J. Chen, R. Gangula, and U. Mitra, ``UAV-aided RF mapping for sensing and connectivity in wireless networks,'' \emph{IEEE Wireless Commun.}, pp. 116--122, Aug. 2023.
+
+\bibitem{ref14}
+O. Esrafilian, R. Gangula, and D. Gesbert, ``UAV-aided wireless node localization using hybrid radio channel models,'' in \emph{Proc. IEEE Int. Conf. Commun. Workshops (ICC Workshops)}, 2022, pp. 1083--1088.
+
+\bibitem{ref15}
+P. Yi, L. Zhu, L. Zhu, Z. Xiao, Z. Han, and X.-G. Xia, ``Joint 3-D positioning and power allocation for UAV relay aided by geographic information,'' \emph{IEEE Trans. Wireless Commun.}, vol. 21, no. 10, pp. 8148--8162, Oct. 2022.
+
+\bibitem{ref16}
+J. A. del Peral-Rosado, J. A. Lopez-Salcedo, G. Seco-Granados, F. Zanier, and M. Crisci, ``Achievable localization accuracy of the positioning reference signal of 3GPP LTE,'' in \emph{Proc. Int. Conf. Localization GNSS (ICL-GNSS)}, 2012, pp. 1--6.
+
+\bibitem{ref17}
+Y. Zeng, J. Xu, and R. Zhang, ``Energy minimization for wireless communication with rotary-wing UAV,'' \emph{IEEE Trans. Wireless Commun.}, vol. 18, no. 4, pp. 2329--2345, Apr. 2019.
+
+\end{thebibliography}
+
+\end{document}

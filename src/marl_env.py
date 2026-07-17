@@ -129,11 +129,19 @@ class MultiUAVEnv:
     def _is_geo(self):
         return getattr(self.cfg, "reward_mode", "clf") == "geoagg_log"
 
+    def _is_no_clf(self):
+        """Check if observation_mode='no_clf' (ablation: remove CLF channels)."""
+        return getattr(self.cfg, "observation_mode", "clf") == "no_clf"
+
     def _self_feat_dim(self):
         if self._is_geo():
             # GeoAgg state s_t (per UAV): pos(3) + raw (C, 1/L)(2) + LoS link
             # count |D_hat|(1) + shared goal-unit(3) + goal-dist(1) + arrived(1).
             return 11
+        if self._is_no_clf():
+            # MAPPO-without-CLF ablation: pos(3) + goal-unit(3) + goal-dist(1) + arrived(1)
+            # NO CLF fingerprint channels (F removed)
+            return 8
         # CLF: normalized pos(3) + F(2) + goal-unit(3) + goal-dist(1) + arrived(1)
         return 10
 
@@ -144,6 +152,10 @@ class MultiUAVEnv:
             # method's own perception mechanism).  Feasibility is still enforced
             # via action_masks() at action selection, not fed as an observation.
             return self._self_feat_dim()
+        if self._is_no_clf():
+            # MAPPO-without-CLF: self features (no F) + per-action (feasible only) over 27 actions
+            # Keeps position, goal, action masks, but NO fingerprint channels
+            return self._self_feat_dim() + 1 * N_ACTIONS  # only feasibility flag
         # CLF: self features + per-action (f_comm, f_loc, feasible) over 27 actions
         return self._self_feat_dim() + 3 * N_ACTIONS
 
@@ -209,6 +221,12 @@ class MultiUAVEnv:
                 [n_los],                                # |D_hat| LoS link count
                 nav,
             ])
+        if self._is_no_clf():
+            # MAPPO-without-CLF ablation: position + navigation ONLY, NO CLF channels
+            return np.concatenate([
+                p / self.area,                          # normalized position
+                nav,
+            ])
         # CLF: sigmoid fingerprint F = (f_comm, f_loc) at the current cell.
         return np.concatenate([
             p / self.area,                              # normalized position
@@ -224,9 +242,26 @@ class MultiUAVEnv:
         GeoAgg baseline: self features ONLY (the raw physical/geometric state at
         the current cell); no neighbour preview -- feasibility is enforced via
         action_masks() at selection time, not observed.
+        MAPPO-without-CLF: self features (no F) + adjacency feasibility mask only,
+        no CLF fingerprint channels.
         """
         if self._is_geo():
             return np.array([self._self_features(n) for n in range(self.U)])
+        if self._is_no_clf():
+            # MAPPO-without-CLF: self features + feasibility mask over 27 actions
+            # NO CLF fingerprint channels (f_comm, f_loc removed)
+            obs = []
+            for n in range(self.U):
+                cell = self.pos[n]
+                self_feat = self._self_features(n)
+                # Adjacency: only feasibility flag per action, NO fingerprints
+                adj = np.zeros((N_ACTIONS, 1))
+                mask = self.env.feasible_action_mask(cell)
+                for a in range(N_ACTIONS):
+                    adj[a, 0] = 1.0 if mask[a] else 0.0
+                obs.append(np.concatenate([self_feat, adj.reshape(-1)]))
+            return np.array(obs)
+        # CLF (proposed): adjacency CLF fingerprint + feasibility
         obs = []
         for n in range(self.U):
             cell = self.pos[n]
@@ -289,40 +324,57 @@ class MultiUAVEnv:
         return -self.cfg.shaping_coef * d / self.shaping_norm
 
     def _geoagg_commloc_reward(self, n, new_cell):
-        """GeoAgg-HSAC potential-based stepwise-log comm/loc reward (Eq.18-20).
+        """GeoAgg-HSAC log-potential comm/loc reward on RAW physical quantities.
 
         Used when cfg.reward_mode == "geoagg_log" -- the INDEPENDENT baseline's
         OWN reward, computed on the RAW physical quantities (capacity C, loc
-        performance 1/L), NOT the CLF fingerprint.  This is what makes the SAC
+        performance 1/L), NOT the CLF fingerprint.  This is what makes the
         baseline a genuine alternative to CLF-MAPPO rather than a re-solve of the
         same CLF objective.
 
-          r^c = f(C_t) - f(C_{t-1}),   f(C) =  log10(C/gamma_r)      (C>=gamma_r)
-                                              -log10(gamma_r/C)       (C< gamma_r)
-          r^l = (1/L_t) - (1/L_{t-1})                                 (Eq.20)
+        IMPORTANT: The reward is CAPPED AT ZERO (a "service-quality gap penalty"
+        relative to the best-achievable voxel), not a positive unbounded reward.
+        This prevents the agent from hovering in a perfect-service voxel to farm
+        infinite reward and never reaching the goal -- it must still rely on the
+        arrival bonus.  The design is still genuinely different from CLF:
+          - GeoAgg: log(C/C_95th) + (1/L)/(1/L_95th) - 2, clipped at 0 (top-heavy,
+            favours C over L because log is unbounded below, no threshold)
+          - CLF: sigmoid(C) + sigmoid(1/L) - 2, clipped at 0 (thresholded,
+            saturates above threshold, balanced by design)
+        So GeoAgg can still beat the CLF-blind geodesic greedy (it senses service
+        quality), but loses to CLF on the balanced C/L objective (its log is
+        top-heavy and keeps piling reward on high C regardless of L demand).
 
         Returns (commloc_reward, C_t, Lperf_t) so the caller can refresh the
-        per-UAV previous-step cache.  gamma_r = cfg.geoagg_gamma_r (median
-        capacity, matching the CLF calibration centre so neither method is
-        favoured).  The weights w_C / w_L are reused so the comm:loc balance is
-        identical to the CLF reward -- only the term DESIGN differs.
+        per-UAV previous-step cache (though the cache is no longer used for the
+        reward itself).
         """
         cfg = self.cfg
         C_t = self._raw_C(new_cell)
         Lperf_t = self._raw_Lperf(new_cell)
-        gr = cfg.geoagg_gamma_r
+        # Reference targets: 95th percentile of the feasible-voxel distribution,
+        # representing "near-best achievable" rather than the absolute median.
+        # This makes the top ~5% score near 0 (saturated), the rest negative.
+        # Calibrated from the CLF map in clf.py (do NOT use gamma_r*const: the
+        # median->p95 ratio is not a fixed constant and drifts with P_comm/P_loc).
+        C_ref = max(float(getattr(cfg, "geoagg_C_ref", cfg.geoagg_gamma_r * 1.5)), 1e-9)
+        Lperf_ref = max(float(getattr(cfg, "geoagg_Lperf_ref",
+                                      cfg.geoagg_lperf_scale * 1.5)), 1e-9)
 
-        def f_log(C):
+        def f_log(C, ref):
             if C <= 0.0:
-                return -cfg.geoagg_log_floor      # no link: large negative score
-            r = C / gr
+                return -cfg.geoagg_log_floor
+            r = C / ref
             v = np.log10(r) if r >= 1.0 else -np.log10(1.0 / r)
             return float(np.clip(v, -cfg.geoagg_log_floor, cfg.geoagg_log_floor))
 
-        rc = f_log(C_t) - f_log(self._prev_C[n])
-        # Localization performance difference, scaled to keep it O(1) like rc.
-        rl = (Lperf_t - self._prev_Lperf[n]) / cfg.geoagg_lperf_scale
-        commloc = (cfg.w_C * rc + cfg.w_L * rl) * cfg.geoagg_commloc_weight
+        # Absolute-level log-potential + loc performance, normalized.
+        rc = f_log(C_t, C_ref)
+        rl = (Lperf_t / Lperf_ref) if Lperf_ref > 0 else 0.0
+        # Combine and offset so the best voxel scores ~0, everything else negative.
+        # (Best voxel: rc~0, rl~1 -> raw~1 -> clipped to 0 after offset -1)
+        raw = cfg.w_C * rc + cfg.w_L * rl - (cfg.w_C * 0.0 + cfg.w_L * 1.0)
+        commloc = np.clip(raw, -10.0, 0.0) * cfg.geoagg_commloc_weight
         return commloc, C_t, Lperf_t
 
     def _collision_indicator(self, new_pos):

@@ -204,8 +204,31 @@ class CLFMap:
             cfg.L_th = L_ref - cfg.delta_L
             cfg.alpha_L = Z / (cfg.loc_band_iqr * r_iqr)
 
+        # GeoAgg-style baseline reward references (paper Eq.18-20).  These are the
+        # RAW-metric analogue of the CLF thresholds above and MUST be derived from
+        # the SAME empirical distributions -- otherwise a hand-set constant goes
+        # stale the moment P_comm/P_loc change and the baseline's reward degenerates
+        # (e.g. a median-C 10x above a stale C_ref makes log10(C/C_ref) uniformly
+        # positive, so every voxel clips to the reward cap and the baseline gets NO
+        # service-quality gradient).  We calibrate two purposes separately:
+        #   * gamma_r / lperf_scale = MEDIAN C and MEDIAN 1/L -> observation-channel
+        #     normalisers (make the raw obs channels O(1); see marl_env).
+        #   * C_ref / Lperf_ref     = 95th-percentile C and 1/L -> "near-best
+        #     achievable" reward references, so the top ~5% of voxels score ~0 and
+        #     the rest negative (the reward is a service-quality gap penalty).
+        if C.size:
+            cfg.geoagg_gamma_r = float(np.median(C))
+            cfg.geoagg_C_ref = float(np.percentile(C, 95))
+        if L.size:
+            cfg.geoagg_lperf_scale = float(r_med)
+            cfg.geoagg_Lperf_ref = float(np.percentile(r, 95))
+
         return dict(C_th=cfg.C_th, delta_C=cfg.delta_C, alpha_C=cfg.alpha_C,
-                    L_th=cfg.L_th, delta_L=cfg.delta_L, alpha_L=cfg.alpha_L)
+                    L_th=cfg.L_th, delta_L=cfg.delta_L, alpha_L=cfg.alpha_L,
+                    geoagg_gamma_r=cfg.geoagg_gamma_r,
+                    geoagg_C_ref=cfg.geoagg_C_ref,
+                    geoagg_lperf_scale=cfg.geoagg_lperf_scale,
+                    geoagg_Lperf_ref=cfg.geoagg_Lperf_ref)
 
     # ------------------------------------------------------------------ #
     def F(self, cell):

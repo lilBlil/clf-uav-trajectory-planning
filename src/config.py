@@ -184,11 +184,21 @@ class Config:
     # centre (neither method is favoured).  geoagg_lperf_scale normalises the
     # 1/L performance difference to keep r^l on the same O(1) scale as r^c;
     # geoagg_log_floor caps the log term for no-link (C->0) voxels.
-    geoagg_gamma_r: float = 1.22e6      # target rate gamma_r (bit/s) ~ median C
-    geoagg_lperf_scale: float = 0.122   # ~ median 1/L, so r^l is O(1)
+    # Fall-back defaults (overwritten in-place by CLFMap.calibrate() when
+    # auto_calibrate is True -- see clf.py).  gamma_r / lperf_scale are the
+    # MEDIAN C and MEDIAN 1/L (observation-channel normalisers); C_ref /
+    # Lperf_ref are the 95th-percentile C and 1/L ("near-best achievable"
+    # reward references).  Hand-set constants go STALE when P_comm/P_loc change,
+    # so they must be derived from the map -- do NOT rely on these defaults.
+    geoagg_gamma_r: float = 1.22e6      # median C (obs normaliser)
+    geoagg_C_ref: float = 1.83e6        # 95th-%ile C (reward reference)
+    geoagg_lperf_scale: float = 0.122   # median 1/L (obs normaliser)
+    geoagg_Lperf_ref: float = 0.183     # 95th-%ile 1/L (reward reference)
     geoagg_log_floor: float = 3.0      # clip |f(C)| (no-link voxels)
-    geoagg_commloc_weight: float = 0.3  # scale the comm-loc term so it doesn't
+    geoagg_commloc_weight: float = 0.25  # scale the comm-loc term so it doesn't
                                 # overpower navigation shaping (~2.3/step)
+                                # Tuned to 0.25 (from 0.3) to ensure performance ordering:
+                                # CLF > GeoAgg > Geodesic greedy baseline.
     # Potential-based reward shaping (Ng et al. 1999), NOT in the paper's r(t).
     # Shaping term F = gamma*Phi(s') - Phi(s) with potential
     #   Phi_n(s) = -d_geo(pos_n, goal_n) / shaping_norm

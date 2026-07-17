@@ -131,8 +131,9 @@ def plot_sac_vs_mappo(env, clf, marl, planners, outdir):
     axT.set_xlabel("normalised path progress (0=start, 1=goal)")
     axT.set_ylabel("capacity C (Mbit/s)  [solid]")
     axT2.set_ylabel("loc error L (m)  [dotted]")
+    axT2.set_ylim(0, 50)  # Cap L at 50m to avoid outlier spikes dominating the plot
     axT.set_title("Physical performance along path (median over UAVs)\n"
-                  "C higher = better, L lower = better")
+                  "C higher = better, L lower = better (outliers >50m clipped)")
     h1, l1 = axT.get_legend_handles_labels()
     h2, l2 = axT2.get_legend_handles_labels()
     axT.legend(h1 + h2, l1 + l2, fontsize=7, ncol=2, loc="best",
@@ -372,7 +373,7 @@ def main():
         lambda m, c: MAPPO(m, c), env, clf, cfg_log, "MAPPO-log", args.seeds)
 
     planners = [
-        {"name": "GeoAgg log reward (reference)", "tag": "reference",
+        {"name": "GeoAgg log reward (baseline)", "tag": "baseline",
          "trajs": log_trajs, "info": log_info, "ls": "--",
          "color": "tab:orange", "hist": log_hist},
         {"name": "CLF reward (proposed)", "tag": "proposed",
