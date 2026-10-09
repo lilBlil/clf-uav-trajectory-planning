@@ -1,174 +1,129 @@
-# CLF-Aided Multi-UAV Trajectory Planning
+# 无人机通信定位一体化协同优化：毕业设计研究分支
 
-基于**通信-定位指纹(Communication-Localization Fingerprint, CLF)**的多无人机协同路径规划复现实现。
+本分支用于吴泽龙硕士毕业设计的模型修订、算法研究与仿真实验。项目以现有 CL 工作中的**通信定位质量地图／指纹辅助规划**为基础，先核验理论、实现和实验结论，再开展毕业论文相关的扩展研究。
 
-复现论文:*"Communication-Localization Fingerprint Aided Multi-UAV Trajectory
-Planning in Urban Environments"*(Communications Letters)。
+研究方向暂定为：**基于多智能体强化学习的无人机通信定位一体化协同优化**。正式题目及新增内容根据模型核验、实验结果和导师意见确定。
 
-## 方法概述
+## 分支与起点
 
-1. **城市环境体素化(Sec. II-A)** — 将三维空域离散为立方体素,结合建筑物占用、安全距离、飞行高度约束,筛选出可行体素集合 `V_f`。
-2. **CLF 地图构建(Sec. II-B)** — 为每个可行体素离线计算:
-   - 可见基站集合 `M_i`(通信距离 + LOS 判定);
-   - 通信性能 `C(v_i)`(SNR → 香农容量),映射为通信指纹 `f_comm`;
-   - TDOA 定位性能 `L(v_i) = sqrt(CRLB)`(需 ≥4 个可见基站),映射为定位指纹 `f_loc`。
-3. **MAPPO 轨迹规划(Sec. III, Algorithm 1)** — 将多无人机协同规划建模为 Dec-POMDP,采用 CTDE 框架的 MAPPO 求解:共享 actor(分布执行)+ 集中式 critic(集中训练)。
+| 项目 | 说明 |
+| --- | --- |
+| 毕设研究分支 | `GradProj_main` |
+| 原 CL 工作分支 | `scenario-redesign` |
+| 分支起点 | [`b31fefd`](https://github.com/lilBlil/clf-uav-trajectory-planning/commit/b31fefda8a648559bbd7f5e7ee3b8a951712f0f7) |
+| 起点提交说明 | `Snapshot latest CL manuscript and experiment scripts` |
 
-## 与论文的差异(实现说明)
+本分支从上述提交独立开展后续工作。当前继承的是 CL 实现与论文材料，尚未完成毕设版本的模型修订或正式重验证。此前讨论中已撤销的审计文档与重验证代码不属于分支起点。
 
-提供的论文素材(`01.md`–`03.md`)**不包含 Section IV 的数值参数表**,因此 `src/config.py` 中所有数值均为物理上合理的工程假设。
+## 研究目标与开题衔接
 
-此外,论文给出的奖励 `r(t)` 各项均 ≤ 0(纯惩罚),其字面最优策略是**悬停在高 CLF 体素**而非到达终点。为使智能体真正学会导航,本实现引入两项工程补充(均可关闭以还原论文原始奖励):
+开题方向为“基于 MARL 的无人机通信定位一体化资源分配方法研究”。毕设工作延续通信与定位联合评价、多无人机协作及集中训练与分布执行的主线，以质量地图辅助的协同规划作为现阶段基础。
 
-- **测地势函数 shaping**(`use_shaping`):`Phi(s) = -k·d_geo(pos, goal)/norm`,其中 `d_geo` 是可行体素图上的最短路径距离(绕开建筑)。基于 Ng et al. 1999 的势函数定理,该项 telescope 为常数,**理论上不改变最优策略**,仅提供导航梯度。
-- **一次性到达奖励**(`r_arrive`):这是真正使"到达"成为最优策略的项。
+- 原开题主要考虑无人机为地面用户提供通信与定位服务，并优化功率及用户关联。
+- 当前 CL 实现主要考虑地面基站为无人机提供通信与定位服务，优化变量为无人机移动动作。
+- 轨迹规划成果不能直接等同于已经完成原开题的功率与用户关联优化。服务对象、决策变量与最终研究范围的调整应在论文和中期材料中明确说明。
 
-详见 `src/config.py` 内的注释。
+本分支首先研究通定质量地图对任务规划的作用，并区分地图信息、邻域预览和指纹表示的贡献。后续可围绕地图不确定性、服务连续性或链路决策选择扩展，具体方案在基础结果核验后确定。
 
-## 对比实验
+## 已继承的实现
 
-### 1. CLF 奖励设计对比 `compare_policies.py`(主结果)
+| 模块 | 当前内容 |
+| --- | --- |
+| 城市环境 | 三维体素、建筑占用、安全距离与高度约束 |
+| 通信质量 | 可见基站与 LoS 判定、路径损耗、SNR 和香农容量 |
+| 定位质量 | 基于 TDOA 几何与测量噪声的定位性能下界 |
+| 通定指纹 | 将通信容量与定位性能下界映射为有界质量指标 |
+| 协同规划 | 27 个离散移动动作，含悬停；MAPPO 的共享 actor 与集中式 critic |
+| 对照方法 | 几何规划、CLF 加权图搜索及多种强化学习实现 |
+| 论文与资料 | CL 写作资料、英文稿件、参考文献与模板 |
 
-在**都能到达终点**的前提下,对比三种规划器的通信-定位服务质量——只有都能到达,f_comm / f_loc 的差距才纯粹来自"是否优化 CLF",而非可达性:
+以上表示已有代码和材料，不表示物理假设、性能结论或泛化能力已经通过毕设版本的验证。代码中的 CLF 与论文使用的 LCF 均指本项目的通定质量指纹，后续将统一命名。
 
-| 规划器 | 说明 |
-|--------|------|
-| 参考(CLF-盲几何贪婪) | 只沿测地场避障最短路,从不看指纹 |
-| MAPPO 无CLF(消融) | 同网络/训练,但 `w_C = w_L = 0`,奖励只剩导航+能耗+碰撞 |
-| **MAPPO 完整CLF**(本文方法) | CLF 感知规划器 |
+## 优先修订的内容
 
-```bash
-python compare_policies.py
-```
+1. **模型与参数一致性：**统一论文、配置和脚本参数；核验通信／定位信号功率、带宽、SNR、测量噪声和定位下界。
+2. **目标与奖励一致性：**明确任务时域、到达条件、失败处理及奖励塑形，核对数学目标与实际优化行为。
+3. **运动与安全模型：**当前训练环境的运动代价是距离代理；核对其与论文能耗表述的差异，并补充时隙内机间最小距离检查。
+4. **公平对照：**在相同信息、预算与评价口径下，区分地图预览、指纹表示和学习算法的作用。
+5. **结果可追溯性：**保存实际训练记录、完整种子结果与配置，将任务完成、服务质量、安全和代价一并评价。
 
-输出 `outputs/policy_comparison.png`:**左**为三策略的 **3D 轨迹**(穿越城市天际线,线型区分规划器、颜色区分无人机),**右**为 f_comm / f_loc / CLF奖励每步的**柱状图**(各策略分组,均值 over UAVs)。典型结果:完整CLF 在 f_comm、f_loc 两项上均最高(如 0.63 / 0.48 vs 参考 0.47 / 0.34),即在同样到达的前提下显著改善通信+定位服务质量。
+定位指标应准确称为定位性能下界；没有实际估计器与测量误差实验时，不将其称为实测 RMSE。定位不可用样本应计入服务失败，并与有限条件下的下界统计一起报告。
 
-同时输出 `outputs/policy_training_curves.png`:四面板**训练曲线**(团队回报、到达率、f_comm、f_loc 随训练更新)叠加对比无CLF vs 完整CLF 两个 MAPPO 变体,参考策略(几何贪婪、无训练)画为水平基准线——展示 CLF 感知与否的学习动态差异。
+## 环境与运行
 
-> 注:本脚本对每个 MAPPO 变体在多个种子上搜索,保留首个全员到达的种子(该场景较难,见下文)。
+现有实现使用 Python 与 NumPy，不依赖 PyTorch 或 TensorFlow。建议 Python 3.10 及以上，原项目开发环境为 Python 3.12。依赖见 [requirements.txt](requirements.txt)。
 
-### 2. CTDE-MARL 算法对比 `compare_ctde.py`
-
-只比较**主流且高性能的 CTDE(集中式训练-分散式执行)算法**,各自调到最佳收敛,画**两条头部曲线**:团队 episode return 与 goal-arrival fraction。
-
-| 算法 | CTDE 子类 | 集中式信号 |
-|------|-----------|-----------|
-| MAPPO | 策略型 CTDE | 集中式 critic V(s) 训练共享分散 actor(PPO clip) |
-| QMIX | 价值型 CTDE | 状态条件单调混合网络组合各 agent Q(训练用),分散 argmax 执行 |
-| VDN | 价值型 CTDE | 加性分解 `Q_tot = Σ Q_n`,联合 TD 目标训练,分散 argmax 执行 |
-
-```bash
-python compare_ctde.py                 # 3 种子,完整训练
-python compare_ctde.py --algos MAPPO QMIX
-python compare_ctde.py --quick         # 快速冒烟
-```
-
-排除 IPPO/IAC/IQL——它们是独立学习,**非 CTDE**。不强求全部到达,重点是在同一公平条件(共享环境/CLF/奖励/种子)下对比最强 CTDE 方法的收敛行为与最终到达。价值型(VDN/QMIX)用更长 ε 退火 + 更高梯度比 + 略大学习率调优。输出 `outputs/ctde_comparison.png`(两面板:return + arrival)与 `outputs/ctde_comparison.csv`。
-
-### 3. MARL 算法可达性对比 `compare_algos.py`
-
-在 **{集中式 critic vs 各自 critic} × {PPO 截断 vs 朴素策略梯度}** 两轴上比较 MAPPO / IPPO / MAA2C / IAC,只保留全员到达的种子绘制训练曲线。
-
-```bash
-python compare_algos.py
-```
-
-**关键发现:在本重设计场景(错位窄缝、端到端穿越)下,只有 MAPPO(集中式 critic + PPO clip)能可靠让全部无人机到达。** IPPO(缺集中式 critic)、MAA2C(缺 PPO 稳定更新)及价值型 IQL/VDN/QMIX(`compare_families.py`)均会搁浅至少一架——印证"协调信用分配 + 稳定更新"两者缺一不可。这本身就是"为何选 MAPPO"的实证依据,也是 `compare_policies.py` 统一采用 MAPPO 的原因。
-
-### 4. 跨家族探索 `compare_families.py`(辅助)
-
-MAPPO vs 价值型 IQL/VDN/QMIX,同环境/CLF/奖励隔离"学习范式"变量。价值型早期样本效率高,但 ε-greedy 在本稀疏奖励场景探索不足,稳定卡在 2/3 到达,故不进入主对比。
-
-## 环境要求
-
-- Python 3.10+(开发于 3.12)
-- 依赖见 `requirements.txt`:numpy / scipy / pandas / matplotlib
-
-MAPPO(含 actor/critic MLP、手写反向传播 + Adam)以纯 NumPy 实现,**不依赖 PyTorch/TensorFlow**。
-
-## 安装与运行(虚拟环境)
-
-### Windows (Git Bash)
-
-```bash
-# 1. 创建虚拟环境
-python -m venv .venv
-
-# 2. 激活
-source .venv/Scripts/activate
-
-# 3. 安装依赖
-pip install -r requirements.txt
-
-# 4. 运行
-python main.py            # 完整训练(论文风格默认参数)
-python main.py --quick    # 快速冒烟测试
-```
-
-### Windows (PowerShell / CMD)
+Windows PowerShell 下安装：
 
 ```powershell
 python -m venv .venv
-.venv\Scripts\activate
-pip install -r requirements.txt
-python main.py
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
 ```
 
-### Linux / macOS
+查看旧版训练入口参数：
 
-```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-python main.py
+```powershell
+.\.venv\Scripts\python.exe main.py --help
 ```
 
-### 命令行选项
+运行继承的 CL 实验：
 
+```powershell
+# 小预算运行，用于检查现有流程
+.\.venv\Scripts\python.exe main.py --quick
+
+# 指定预算与种子
+.\.venv\Scripts\python.exe main.py --episodes 1200 --seed 42
 ```
-python main.py --quick           # 快速冒烟测试(少 episode、粗网格)
-python main.py --episodes 1200   # 自定义训练 episode 数(Epi_max)
-python main.py --seed 42         # 指定随机种子
-python main.py --no-verbose      # 关闭逐次更新日志
+
+这些命令运行旧版模型，不代表修订后的毕设实验。默认结果写入 `outputs/`，重复运行会覆盖同名文件；保留既有结果时，应先备份或在实验入口中指定独立输出目录。当前分支尚未验证端到端实验流程。
+
+其他入口位于 `scripts/`，使用前检查配置、种子选择和结果生成逻辑：
+
+```powershell
+.\.venv\Scripts\python.exe scripts\compare_three_methods.py --help
+.\.venv\Scripts\python.exe scripts\compare_four_methods.py --help
+.\.venv\Scripts\python.exe scripts\pareto_clf.py --help
 ```
 
-## 输出
+## 实验约定
 
-运行后在 `outputs/` 生成(已在 `.gitignore` 中忽略):
+- 正式实验预先确定参数和种子，保存全部结果，包括任务失败的运行。
+- 代表性轨迹与跨种子统计分别展示；成功条件下的指标明确注明筛选条件。
+- 比较观测表示时保持原始信息与奖励一致，避免同时改变多个因素后归因于单一设计。
+- 权重扫描保留各点实际结果，不以跨种子挑选单调曲线替代统计验证。
+- 图表来自实际记录。`scripts/make_paper_figures.py` 包含合成训练曲线逻辑，其生成内容不能用作真实训练证据。
+- 原有 `GeoAgg-style` 对照是适配基线，不能表述为完整复现 GeoAgg-HSAC。
+- 图搜索作为已知地图条件下的强参考，算法排名由实验决定。
 
-| 文件 | 内容 |
-|------|------|
-| `clf_heatmaps.png` | 参考高度层的 `f_comm` / `f_loc` 指纹热图 |
-| `trajectories_3d.png` | 规划出的多无人机三维轨迹 |
-| `training_curves.png` | 训练曲线(reward / CLF / 到达率等) |
-| `training_history.csv` | 逐次更新的训练指标 |
-| `clf_summary.csv` | CLF 地图统计汇总 |
+`outputs/` 已被 `.gitignore` 忽略，论文和代码提交不会自动备份其中的数据。正式结果应另行归档，保留配置、代码提交号、训练历史、模型及评价结果。
 
-## 项目结构
+## 目录结构
 
-```
+```text
 .
-├── main.py                      # 入口,参数解析
-├── compare_algos.py             # 同家族对比(MAPPO/IPPO/MAA2C/IAC)
-├── compare_families.py          # 跨家族对比(MAPPO vs IQL/VDN/QMIX)
-├── compare_policies.py          # CLF 消融对比(reference / no-CLF / full-CLF)
-├── requirements.txt
-├── 01.md, 02a.md, 02b.md, 03.md # 论文素材(引言 / 环境 / CLF / 算法)
+├── README.md                    # 毕设研究分支说明
+├── main.py                      # 现有训练入口
+├── requirements.txt             # Python 依赖
 ├── src/
-│   ├── config.py                # 全部配置与参数(工程假设)
-│   ├── environment.py           # 城市环境体素化 + 可行集 + 测地距离场
-│   ├── clf.py                   # CLF 地图构建(SNR/容量 + TDOA CRLB)
-│   ├── marl_env.py              # Dec-POMDP 多无人机环境(状态/观测/奖励)
-│   ├── mappo.py                 # MAPPO 训练器(GAE + clipped surrogate)
-│   ├── marl_algos.py            # on-policy AC 家族(IPPO/MAA2C/IAC 变体)
-│   ├── value_marl.py            # value-based 家族(IQL/VDN/QMIX + 回放/目标网络)
-│   ├── networks.py              # NumPy MLP + Adam + masked softmax
-│   ├── utils.py                 # 几何工具(box / LOS 判定)
-│   └── plotting.py              # 可视化
-└── experiments/
-    └── run_experiment.py        # 端到端流程(环境→CLF→训练→出图)
+│   ├── config.py                # 参数与配置
+│   ├── environment.py           # 城市体素与可行空间
+│   ├── clf.py                   # 通信与定位质量地图
+│   ├── marl_env.py              # 多无人机交互环境
+│   ├── mappo.py                 # MAPPO 训练器
+│   ├── clf_dijkstra.py          # CLF 加权图搜索
+│   ├── networks.py              # NumPy 网络与优化器
+│   └── ...                     # 其他算法、几何和绘图模块
+├── experiments/
+│   └── run_experiment.py        # 现有端到端实验流程
+├── scripts/                     # 对照实验、诊断与绘图脚本
+│   └── legacy/                  # 历史实验与重绘脚本
+├── paper/                       # CL 稿件与参考文献
+├── figures/                     # 已跟踪的框架示意图
+├── sample/                      # IEEE 模板资料
+└── outputs/                     # 本地实验输出，Git 忽略
 ```
 
-## 已知问题 / 进行中
+## 中期前工作顺序
 
-- 稀疏奖励下 MAPPO 探索不足,远距离起点时策略可能过早收敛于悬停。改进方向:增强熵正则 / 起点随机化课程。
+先完成模型、实现与评价口径核验，再重跑最小核心对照；根据可信结果选择一项扩展，最后整理中期报告与答辩材料。进展按实际完成的代码、理论核验和实验记录更新，不预设所有方法均收敛或某种方法必然最优。
