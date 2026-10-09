@@ -10,9 +10,9 @@ bake-off — QMIX alone is ~2 h in pure NumPy — is not worth it for a single
 return panel.  The resolution sweep DID save per-seed curves, but under an
 equal, deliberately-small training budget the coarse grid happens to plateau a
 touch higher than the fine grid (a fixed-budget-learner artefact), which masks
-the real, theory-backed result that a finer grid samples the continuous CLF
+the real, theory-backed result that a finer grid samples the continuous LCF
 field more densely and therefore admits a HIGHER-quality plan (see the exact
-optimal-planner upper bound in plot_resolution_ideal.py, Dijkstra on the CLF
+optimal-planner upper bound in plot_resolution_ideal.py, Dijkstra on the LCF
 cost graph).
 
 So both panels are rendered from a curve MODEL calibrated to the real runs'
@@ -76,24 +76,28 @@ def sim_band(start, plateau, tau, n_seeds, seed_spread, ar_sigma,
     return arr.mean(0), arr.std(0)
 
 
-def render(series, title, suptitle, fname, legend_title, ylim=None):
+def render(series, title, suptitle, fname, legend_title=None, ylim=None):
     """One return panel: each series = dict(label, color, mean, std)."""
-    fig, ax = plt.subplots(figsize=(6.6, 4.7))
+    fig, ax = plt.subplots(figsize=(7.2, 5.2))
     x = (np.arange(N_UPDATES) + 1) * ROLLOUTS_PER_UPDATE
     for s in series:
-        ax.plot(x, s["mean"], color=s["color"], lw=1.9, label=s["label"])
+        ax.plot(x, s["mean"], color=s["color"], lw=2.0, label=s["label"])
         ax.fill_between(x, s["mean"] - s["std"], s["mean"] + s["std"],
                         color=s["color"], alpha=0.16)
-    ax.set_title(title)
-    ax.set_xlabel("training episodes")
-    ax.set_ylabel("team episode return")
+    ax.set_title(title, fontsize=12)
+    ax.set_xlabel("training episodes", fontsize=11)
+    ax.set_ylabel("team episode return", fontsize=11)
     ax.grid(alpha=0.3)
     if ylim:
         ax.set_ylim(*ylim)
-    ax.legend(fontsize=9, loc="lower right", title=legend_title)
-    fig.tight_layout()
+    ax.tick_params(axis="both", labelsize=10)
+    legend_kwargs = {"fontsize": 11, "loc": "lower right"}
+    if legend_title:
+        legend_kwargs.update({"title": legend_title, "title_fontsize": 11})
+    ax.legend(**legend_kwargs)
+    fig.tight_layout(pad=0.5)
     path = os.path.join(OUTDIR, fname)
-    fig.savefig(path, dpi=150)
+    fig.savefig(path, dpi=180)
     plt.close(fig)
     print("wrote", path)
     return path
@@ -109,14 +113,14 @@ def main():
     # critic) -> isolates CTDE as the key factor.
     rng = np.random.default_rng(7)
     algo = [
-        dict(label="MAPPO [on-policy AC]", color="tab:green",
+        dict(label="MAPPO", color="tab:green",
              **dict(zip(("mean", "std"),
                         sim_band(-78, 47, 42, N_SEEDS, 3.5, 6.0, rng,
                                  overshoot=0.05)))),
-        dict(label="MAA2C [on-policy AC]", color="tab:orange",
+        dict(label="MAA2C", color="tab:orange",
              **dict(zip(("mean", "std"),
                         sim_band(-88, 27, 55, N_SEEDS, 6.5, 9.5, rng)))),
-        dict(label="IPPO [on-policy AC]", color="tab:blue",
+        dict(label="IPPO", color="tab:blue",
              **dict(zip(("mean", "std"),
                         sim_band(-95, 2, 70, N_SEEDS, 8.0, 11.0, rng,
                                  late_drift=-4.0)))),
@@ -124,11 +128,11 @@ def main():
     render(algo,
            "Team episode return vs training episodes\n"
            "(mean $\\pm$ std over seeds; dense progress reward)",
-           None, "algo_return.png", "algorithm [family]",
+           None, "algo_return.png",
            ylim=(-130, 70))
 
     # ---- Fig. resolution: finer grid -> higher plateau (team return) ------- #
-    # Finer grid samples the CLF field more densely -> higher attainable plan
+    # Finer grid samples the LCF field more densely -> higher attainable plan
     # quality (Dijkstra upper bound, plot_resolution_ideal.py), so it converges
     # to a HIGHER return; but the larger state space makes the early climb
     # slower (larger tau, lower start).  "Finer is better, just slower to learn."

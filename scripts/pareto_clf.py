@@ -5,8 +5,8 @@ CLF weight Pareto front: sweep the communication/localization reward ratio and
 show that the SAME CLF-aware MAPPO planner can be steered to trade communication
 quality off against localization quality on demand.
 
-For each weight point we hold the total CLF weight fixed at 1 (w_C + w_L = 1)
-and sweep the localization weight:
+For each weight point we sweep the communication weight and set the
+localization weight as w_L = 1 - w_C:
 
     w_L  in  {0, 0.25, 0.5, 0.75, 1.0}
 
@@ -23,7 +23,7 @@ Usage:
     python pareto_clf.py --quick         # short training, smoke test
 
 Output:
-    outputs/pareto_clf.png
+    outputs/pareto_lcf.png
     outputs/pareto_clf.csv
 """
 from __future__ import annotations
@@ -36,7 +36,7 @@ import argparse
 import numpy as np
 import pandas as pd
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src.config import Config
 from src.environment import UrbanEnvironment
@@ -45,9 +45,28 @@ from src.marl_env import MultiUAVEnv
 from src.mappo import MAPPO
 from src.plotting import _clf_stats
 
-# Total CLF weight is held fixed at the paper's constraint w_C + w_L = 1; only
-# the comm:loc split changes.  Because the denominator is 1, the loc fraction
-# rho = w_L/(w_C+w_L) equals w_L directly, and w_C = 1 - w_L.
+FIG_FONT_SIZE = 8
+FIG_FONT = "Times New Roman"
+
+
+def _set_figure_style(plt):
+    plt.rcParams.update({
+        "font.family": "serif",
+        "font.serif": [FIG_FONT, "Times", "DejaVu Serif"],
+        "font.size": FIG_FONT_SIZE,
+        "axes.titlesize": FIG_FONT_SIZE,
+        "axes.labelsize": FIG_FONT_SIZE,
+        "xtick.labelsize": FIG_FONT_SIZE,
+        "ytick.labelsize": FIG_FONT_SIZE,
+        "legend.fontsize": FIG_FONT_SIZE,
+        "mathtext.fontset": "stix",
+        "mathtext.rm": "Times New Roman",
+        "mathtext.it": "Times New Roman:italic",
+        "mathtext.bf": "Times New Roman:bold",
+    })
+
+# The localization weight is parameterized by the communication weight:
+# w_L = 1 - w_C.  The scalar rho below equals the resulting w_L directly.
 W_TOTAL = 1.0
 
 
@@ -178,6 +197,7 @@ def plot_pareto(rows, outdir):
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
+    _set_figure_style(plt)
 
     rho = np.array([r["rho"] for r in rows])
     fc = np.array([r["mean_f_comm"] for r in rows])
@@ -185,29 +205,36 @@ def plot_pareto(rows, outdir):
 
     # The operating points were chosen by select_monotone_chain() to be monotone
     # in rho (f_comm non-increasing, f_loc non-decreasing), so ALL points lie on
-    # the trade-off frontier; connect them in rho order for a clean monotone line.
+    # the trade-off curve; connect them in rho order for a clean monotone line.
     order = np.argsort(rho)
 
-    fig, ax = plt.subplots(figsize=(6.4, 5.6))
-    ax.plot(fc[order], fl[order], "-", color="0.6", lw=1.6, zorder=1,
-            label="trade-off frontier")
-    sc = ax.scatter(fc, fl, c=rho, cmap="coolwarm", s=130, edgecolors="k",
-                    zorder=3, vmin=0, vmax=1)
+    fig, ax = plt.subplots(figsize=(3.10, 2.30))
+    ax.plot(fc[order], fl[order], "-", color="0.6", lw=1.15, zorder=1,
+            label="trade-off curve")
+    sc = ax.scatter(fc, fl, c=rho, cmap="coolwarm", s=36, edgecolors="k",
+                    linewidths=0.8, zorder=3, vmin=0, vmax=1)
     for r in rows:
+        place_left = r["mean_f_comm"] >= np.median(fc)
+        xytext = (-4, 3) if place_left else (4, 3)
         ax.annotate(r"$w_L$=%.2f" % r["rho"],
                     (r["mean_f_comm"], r["mean_f_loc"]),
-                    textcoords="offset points", xytext=(8, 6), fontsize=8)
-    cb = fig.colorbar(sc, ax=ax, fraction=0.046, pad=0.04)
-    cb.set_label(r"$w_L$  (localization weight, $w_C+w_L=1$)")
-    ax.set_xlabel(r"mean $f_{comm}$ along path  (higher = better comm)")
-    ax.set_ylabel(r"mean $f_{loc}$ along path  (higher = better loc)")
-    ax.set_title("CLF comm-loc trade-off frontier\n"
-                 "(same planner, only $w_C,w_L$ change, $w_C+w_L=1$)")
-    ax.legend(loc="lower left", fontsize=8)
+                    textcoords="offset points", xytext=xytext,
+                    ha="right" if place_left else "left",
+                    fontsize=FIG_FONT_SIZE)
+    cb = fig.colorbar(sc, ax=ax, fraction=0.048, pad=0.035)
+    cb.set_label(r"$w_L$", fontsize=FIG_FONT_SIZE)
+    cb.ax.tick_params(labelsize=FIG_FONT_SIZE)
+    ax.set_xlabel(r"mean $f_{\mathrm{comm}}$")
+    ax.set_ylabel(r"mean $f_{\mathrm{loc}}$")
+    ax.set_title("LCF trade-off curve")
+    ax.legend(loc="lower left", framealpha=0.9, handlelength=1.35,
+              borderpad=0.25, labelspacing=0.25,
+              fontsize=FIG_FONT_SIZE)
     ax.grid(alpha=0.3)
-    fig.tight_layout()
-    path = os.path.join(outdir, "pareto_clf.png")
-    fig.savefig(path, dpi=150)
+    ax.margins(x=0.06, y=0.08)
+    fig.tight_layout(pad=0.25)
+    path = os.path.join(outdir, "pareto_lcf.png")
+    fig.savefig(path, dpi=300)
     plt.close(fig)
     return path
 
@@ -225,7 +252,7 @@ def main():
     ap.add_argument("--shaping", type=float, default=50.0,
                     help="shaping_coef: navigation pull. Raised above the 38 "
                          "default so the diagonal pull (~shaping*35/750) beats "
-                         "the worst-case CLF parking cost (w_C+w_L=1.0) at the "
+                         "the worst-case CLF parking cost at the "
                          "extreme rho=0/1 points, where 38 left UAVs stranded.")
     ap.add_argument("--seeds", type=int, nargs="+", default=[0, 1, 2, 3, 4, 5],
                     help="seeds trained per point; the monotone-chain selector "
@@ -233,6 +260,8 @@ def main():
                          "curve is monotone (more seeds = more candidates)")
     ap.add_argument("--verbose", action="store_true",
                     help="per-update training logs for each point")
+    ap.add_argument("--replot", action="store_true",
+                    help="reuse outputs/pareto_clf.csv and only redraw the LCF figure")
     args = ap.parse_args()
 
     cfg = Config()
@@ -245,6 +274,14 @@ def main():
 
     outdir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "outputs")
     os.makedirs(outdir, exist_ok=True)
+
+    if args.replot:
+        csv_path = os.path.join(outdir, "pareto_clf.csv")
+        rows = pd.read_csv(csv_path).to_dict("records")
+        print(">> Re-rendering tradeoff figure from saved CSV ...")
+        fig_path = plot_pareto(rows, outdir)
+        print(f"   {fig_path}")
+        return
 
     print(">> Building environment + CLF map (shared across all points) ...")
     np.random.seed(cfg.seed)

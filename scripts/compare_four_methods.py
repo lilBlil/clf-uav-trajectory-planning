@@ -13,7 +13,7 @@ error L (m).
 Output:
     outputs/four_method_comparison.csv
     outputs/four_method_comparison.npz
-    outputs/trajectories_4way.png  (Fig 3: 3D trajectories)
+    outputs/trajectories_4way.png  (Fig 3(a): 3D trajectories)
     outputs/quant_metrics.png      (Fig 4b: bar chart)
 """
 from __future__ import annotations
@@ -147,30 +147,31 @@ def plot_trajectories_3d(env, clf, planners, outdir):
     fig = plt.figure(figsize=(10, 8))
     ax = fig.add_subplot(111, projection="3d")
 
-    # Buildings (color-coded by height)
+    # Buildings stay visually subordinate to the trajectories.
     seen = {}
     for (cx, cy, cz), (lw, ww, hh) in cfg.buildings:
         top = cz + hh / 2.0
         label, color = _height_class(env, top)
-        _draw_box(ax, cx, cy, cz, lw, ww, hh, color=color, alpha=0.18)
+        _draw_box(ax, cx, cy, cz, lw, ww, hh, color=color, alpha=0.10)
         seen[label] = color
 
     # Base stations
     ax.scatter(env.bs[:, 0], env.bs[:, 1], env.bs[:, 2],
-               c="red", marker="^", s=70, depthshade=False, label="BS")
+               c="red", marker="^", s=30, alpha=0.7, depthshade=False, label="BS")
 
-    # Trajectories: color = UAV, line style = method
+    # Trajectories: color = method, line style = method. Keeping the method
+    # encoding consistent makes the dense multi-UAV view easier to scan.
     n_uav = len(planners[0]["trajs"])
-    colors = plt.cm.tab10(np.linspace(0, 1, n_uav))
 
     for p in planners:
-        lw = 2.8 if p["tag"] == "proposed" else 1.8
+        lw = 2.4 if p["tag"] == "proposed" else 1.35
+        alpha = 0.92 if p["tag"] == "proposed" else 0.68
         for n in range(n_uav):
             if n >= len(p["trajs"]):
                 continue
             pts = np.array([env.center_of(c) for c in p["trajs"][n]])
             ax.plot(pts[:, 0], pts[:, 1], pts[:, 2], p["ls"], lw=lw,
-                    color=colors[n], alpha=0.9)
+                    color=p["color"], alpha=alpha)
 
     # Start/goal markers (from proposed method)
     last = [p for p in planners if p["tag"] == "proposed"][0]
@@ -180,9 +181,9 @@ def plot_trajectories_3d(env, clf, planners, outdir):
         s = np.array([env.center_of(c) for c in last["trajs"][n]])[0]
         g_idx = [i for i, g in enumerate(cfg.goals_world) if i == n][0]
         g = env.center_of(env.snap_to_feasible(cfg.goals_world[g_idx]))
-        ax.scatter(*s, color=colors[n], marker="s", s=70,
+        ax.scatter(*s, color="white", marker="s", s=50,
                    edgecolors="k", depthshade=False)
-        ax.scatter(*g, color=colors[n], marker="*", s=180,
+        ax.scatter(*g, color="white", marker="*", s=120,
                    edgecolors="k", depthshade=False)
 
     ax.set_xlim(0, cfg.area[0])
@@ -191,14 +192,14 @@ def plot_trajectories_3d(env, clf, planners, outdir):
     ax.set_xlabel("x (m)")
     ax.set_ylabel("y (m)")
     ax.set_zlabel("z (m)")
-    ax.set_title("Representative trajectories in urban CLF field", fontsize=11)
+    ax.set_title("(a) Representative trajectories in urban CLF field", fontsize=11)
 
     # Legend
     proxies = [
-        Line2D([0], [0], color="k", ls="-", lw=2.8, label="CLF-MAPPO (proposed)"),
-        Line2D([0], [0], color="k", ls=":", lw=1.8, label="CLF-Dijkstra"),
-        Line2D([0], [0], color="k", ls="--", lw=1.8, label="GeoAgg-style RL"),
-        Line2D([0], [0], color="k", ls="-.", lw=1.8, label="MAPPO-no-CLF"),
+        Line2D([0], [0], color="tab:green", ls="-", lw=2.4, label="CLF-MAPPO (proposed)"),
+        Line2D([0], [0], color="tab:cyan", ls=":", lw=1.35, label="CLF-Dijkstra"),
+        Line2D([0], [0], color="tab:orange", ls="--", lw=1.35, label="GeoAgg-style RL"),
+        Line2D([0], [0], color="tab:purple", ls="-.", lw=1.35, label="MAPPO-no-CLF"),
         Line2D([0], [0], color="k", marker="s", ls="", label="start"),
         Line2D([0], [0], color="k", marker="*", ls="", ms=11, label="goal"),
         Line2D([0], [0], color="red", marker="^", ls="", label="BS"),
