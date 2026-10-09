@@ -1,0 +1,181 @@
+% !TeX program = xelatex
+% 编译：在 gradproj 目录运行 xelatex midterm_report.tex（建议运行两遍）。
+% 依据：附件1：中期检查格式及要求.doc。
+% 本文件只提供内容框架，不复刻 Word 模板的版式。
+% 正式报告需按模板要求扩充至不少于 6000 字，并核对个人信息及成果状态。
+\documentclass[UTF8,a4paper,12pt,fontset=fandol]{ctexart}
+
+\usepackage[margin=2.5cm]{geometry}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs,tabularx}
+\usepackage{enumitem}
+\usepackage[hidelinks]{hyperref}
+
+\setlength{\parindent}{2em}
+\setlength{\parskip}{0.3em}
+\setlist[itemize]{nosep,leftmargin=2em}
+\setlist[enumerate]{nosep,leftmargin=2em}
+\newcommand{\pending}[1]{\par\noindent\textbf{【待补充】}#1\par}
+
+\begin{document}
+
+\begin{titlepage}
+  \begin{center}
+    {\Large 北京航空航天大学\par}
+    \vspace{1.2cm}
+    {\LARGE\bfseries 硕士学位论文中期检查报告\par}
+    \vspace{1.6cm}
+    {\Large 无人机通信定位一体化协同优化方法研究\par}
+    \vspace{0.4cm}
+    {\normalsize （论文题目暂定，后续与导师确认）\par}
+    \vspace{1.4cm}
+    \renewcommand{\arraystretch}{1.6}
+    \begin{tabular}{ll}
+      作者姓名 & 吴泽龙 \\
+      学号 & ZY2423323 \\
+      学科专业 & 电子信息（085400） \\
+      指导教师 & 赵洪博 教授 \\
+      校外合作导师 & 王少璞 高级工程师 \\
+      培养院系 & 国家卓越工程师学院 \\
+      中图分类号 & 待填写 \\
+      中期检查日期 & 待填写 \\
+    \end{tabular}
+  \end{center}
+\end{titlepage}
+
+\tableofcontents
+\clearpage
+
+\section{开题报告的论文研究方案}
+
+\subsection{研究背景与问题}
+\pending{简述无人机通信定位一体化的应用需求、空地链路遮挡及多无人机协同决策问题。说明通信、定位与任务开销之间的关系。}
+
+\subsection{开题阶段的研究内容}
+开题题目为“基于 MARL 的无人机通信定位一体化资源分配方法研究”。原计划主要包括空地网络与通定机制建模、可调资源与优化问题构建、多智能体强化学习算法设计及仿真评价。
+\pending{依据开题报告补充具体研究对象、服务对象、功率与用户关联等决策变量，以及预期目标。}
+
+\subsection{关键技术与预期新意}
+\begin{itemize}
+  \item 空地信道、通信性能与定位性能的统一评价。
+  \item 多无人机决策的集中训练与分布执行。
+  \item 通信与定位联合优化及资源约束处理。
+\end{itemize}
+\pending{写出开题时提出的关键技术和预期创新点，并区分后续调整形成的新内容。}
+
+\section{开题报告的论文工作计划}
+
+\pending{按开题报告原有安排填写本表；实际完成情况在第四部分说明。}
+\begin{center}
+  \renewcommand{\arraystretch}{1.35}
+  \begin{tabularx}{\textwidth}{p{3.3cm}XX}
+    \toprule
+    时间阶段 & 原计划研究任务 & 预期阶段成果 \\
+    \midrule
+    2025.11--2025.12 & 开题调研与研究方案制定 & 开题报告及研究路线 \\
+    2026.01--2026.03 & 场景、信道与通定机制建模 & 系统模型与优化问题 \\
+    2026.04--2026.07 & MARL 建模及算法实现 & 状态、动作、奖励与训练框架 \\
+    2026.08--2026.10 & 训练、对照实验与性能分析 & 仿真数据与阶段性结论 \\
+    2026.11--2026.12 & 成果整理与学位论文撰写 & 学位论文及答辩材料 \\
+    \bottomrule
+  \end{tabularx}
+\end{center}
+
+\section{已研究的内容和实现技术及关键技术的突破}
+
+\subsection{现阶段研究内容概览}
+现阶段工作以 CL 项目的通定质量地图辅助多无人机规划为基础。以下各节用于整理已有实现、理论核验与实验结果，完成程度以实际检查和重验证结果为准。
+\pending{用一张研究框架图概括“场景与链路建模、通定质量地图、协同决策、实验评价”的关系。}
+
+\subsection{城市空地场景与系统模型}
+\pending{说明建筑、基站、无人机、起终点及时间步的设置，给出空域离散化、可行区域和运动约束。明确当前系统由地面基站为无人机提供通定服务。}
+
+\subsection{通信与定位性能建模}
+\subsubsection{通信链路与服务质量}
+\pending{补充信道增益、遮挡、信号功率、噪声与通信速率公式。明确带宽、干扰及基站服务方式的假设，并与实际配置保持一致。}
+\subsubsection{定位测量与精度下界}
+\pending{补充 TDOA 测量模型、噪声协方差、Fisher 信息矩阵与定位下界。说明锚点可用性、数值退化处理及适用条件，区分理论下界与实际定位误差。}
+
+\subsection{通定质量地图与指纹表示}
+\pending{说明地图构建流程、指纹定义、归一化参数与业务阈值。分别讨论离线地图、邻域预览和数值表示的作用，给出质量分布图及统计。}
+
+\subsection{多无人机协同规划问题与算法}
+\subsubsection{优化目标、决策变量与约束}
+\pending{统一有限任务的优化目标、到达条件、运动代价及多机安全约束，使数学表述与实现一致。}
+\subsubsection{状态、观测、动作与奖励}
+\pending{列出全局状态、局部观测、移动动作、动作掩码、奖励及终止机制；说明邻机信息与地图信息的获取方式。}
+\subsubsection{MAPPO 实现及关键问题处理}
+\pending{补充集中训练与分布执行流程、网络结构、优势估计和更新方法。仅对已完成并核验的处理方法说明突破及效果。}
+
+\subsection{仿真设置与结果分析}
+\subsubsection{参数、场景与实验协议}
+\pending{给出统一参数表、训练预算、预先指定的随机种子、评价任务与数据保存方式；标明开发场景和独立测试场景。}
+\subsubsection{对照方法与消融设计}
+\pending{安排几何规划、质量地图图搜索、指纹 MAPPO、相同信息下的原始指标 MAPPO，以及移除邻域预览的对照。说明各对照控制的变量。}
+\subsubsection{任务完成、服务质量、安全与代价}
+\pending{插入实际训练曲线、轨迹图和跨种子统计。报告到达情况、通信性能、定位可用率与下界、机间距离及运动代价，同时保留失败样本。}
+\subsubsection{适用范围与尚存问题}
+\pending{分析结果是否支持预期目标，解释失败案例、参数敏感性与模型限制，避免将未验证内容写成确定结论。}
+
+\subsection{关键技术进展与阶段性结论}
+\pending{归纳已经解决的具体问题，并逐项对应理论推导、代码实现或实验记录；尚未完成的核验单独说明。}
+
+\section{已研究工作总结}
+
+\subsection{中期目标完成情况}
+\pending{对照开题目标列出已完成、部分完成及尚未完成的工作，说明各项成果的证据与剩余问题。}
+
+\subsection{与开题报告相比的调整及原因}
+\pending{说明服务对象从地面用户转向无人机自身通定服务、重点从功率与用户关联转向质量地图辅助轨迹规划，以及算法选择等调整。解释调整依据及与原研究主线的联系。}
+
+\subsection{当前不足与拟解决措施}
+\pending{总结模型一致性、定位下界核验、任务奖励、安全处理与实验统计方面的不足，并给出对应修订措施。}
+
+\section{后续研究的内容和实现技术}
+
+\subsection{尚未完成的研究内容}
+\pending{列出毕业前必须完成的理论核验、实现修订、核心重跑及论文整理工作。}
+
+\subsection{扩展研究与拟采用技术}
+\pending{在基础结果可信后，选择地图不确定性、服务连续性或链路决策中的一项展开。明确新增问题、方法、对照与评价指标，不将备选方向写成已完成成果。}
+
+\subsection{后续工作计划与可行性}
+\begin{center}
+  \renewcommand{\arraystretch}{1.35}
+  \begin{tabularx}{\textwidth}{p{2.8cm}XX}
+    \toprule
+    时间节点 & 工作内容 & 预期输出 \\
+    \midrule
+    待填写 & 统一模型、目标、安全与评价口径 & 经核验的模型与实现 \\
+    待填写 & 完成核心对照及消融重跑 & 配置、记录与统计结果 \\
+    待填写 & 完成选定的扩展研究 & 新增方法与验证结果 \\
+    待填写 & 整理论文及答辩材料 & 学位论文与汇报材料 \\
+    \bottomrule
+  \end{tabularx}
+\end{center}
+\pending{补充计算资源、数据来源、时间安排及可能的替代方案。}
+
+\section{已发表的论文和取得的成果}
+
+\subsection{学术论文}
+\pending{按实际情况列出题目、作者、期刊或会议、发表或投稿状态。已有 CL 稿件的状态需核实，不能将撰写中或投稿中列为已发表。}
+
+\subsection{其他成果}
+\pending{填写已取得的专利、软件著作权、获奖及其他研究成果；没有相关成果时如实说明。}
+
+\subsection{成果与开题创新点的对应关系}
+\pending{逐项说明上述成果对应的开题研究内容或创新点；调整后的贡献说明形成过程与证据。}
+
+\section{参考文献}
+\pending{按正文实际引用补充文献，优先核对原始论文与标准。最终格式按学院参考文献要求统一。}
+
+% 后续插图示例（确认文件存在后再取消注释）：
+% \usepackage{graphicx} 应放在导言区。
+% \begin{figure}[htbp]
+%   \centering
+%   \includegraphics[width=0.8\textwidth]{figures/example.pdf}
+%   \caption{待填写图题、坐标含义和单位}
+%   \label{fig:example}
+% \end{figure}
+
+\end{document}
